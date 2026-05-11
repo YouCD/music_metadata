@@ -278,7 +278,9 @@ func writeMetadataWithFFmpeg(filePath, artist, album, date, lyrics string, cover
 	}
 
 	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stderr = os.Stderr
+	// 屏蔽 ffmpeg 输出，避免干扰程序日志
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
 		os.Remove(tmpOut)
 		return fmt.Errorf("ffmpeg 写入元数据失败: %w", err)

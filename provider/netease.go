@@ -68,6 +68,8 @@ type netEaseLyricResponse struct {
 type netEaseSongDetailResponse struct {
 	Songs []struct {
 		Al struct {
+			ID     int    `json:"id"`
+			Name   string `json:"name"`
 			PicURL string `json:"picUrl"`
 		} `json:"al"`
 	} `json:"songs"`
@@ -242,7 +244,7 @@ func (p *NetEaseProvider) GetCover(ctx context.Context, song SongInfo) ([]byte, 
 
 // getCoverURL 通过歌曲详情接口获取封面图片 URL
 func (p *NetEaseProvider) getCoverURL(ctx context.Context, songID string) (string, error) {
-	apiURL := fmt.Sprintf("%s/song/detail?id=%s", p.BaseURL, songID)
+	apiURL := fmt.Sprintf("%s/song/detail?ids=%s", p.BaseURL, songID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {

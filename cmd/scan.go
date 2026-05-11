@@ -141,6 +141,12 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 	log.WithCtx(ctx).Infof("文件信息 - 标题: %s, 歌手: %s, 专辑: %s, 有歌词: %v, 有封面: %v",
 		mf.Title, mf.Artist, mf.Album, mf.HasLyrics, mf.HasCover)
 
+	// 检查元信息是否完整，完整则跳过（非强制更新模式下）
+	if !forceUpdate && mf.IsComplete() {
+		log.WithCtx(ctx).Info("✅ 元信息完整，跳过")
+		return nil
+	}
+
 	// 2. 构建搜索关键词
 	keyword := buildSearchKeyword(mf.Title, mf.Artist)
 	log.WithCtx(ctx).Info(fmt.Sprintf("🔍 搜索: \"%s\"", keyword))

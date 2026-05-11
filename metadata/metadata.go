@@ -83,6 +83,11 @@ func (mf *MusicFile) String() string {
 	)
 }
 
+// IsComplete 检查元信息是否完整（标题、歌手、专辑、歌词、封面都存在）
+func (mf *MusicFile) IsComplete() bool {
+	return mf.Title != "" && mf.Artist != "" && mf.Album != "" && mf.HasLyrics && mf.HasCover
+}
+
 // IsSupported 检查文件格式是否受支持
 func IsSupported(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
