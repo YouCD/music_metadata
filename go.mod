@@ -1,4 +1,4 @@
-module music_metadata
+module github.com/YouCD/music_metadata
 
 go 1.25.0
 

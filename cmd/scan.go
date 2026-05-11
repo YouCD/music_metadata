@@ -3,13 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"music_metadata/metadata"
-	"music_metadata/provider"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/YouCD/music_metadata/metadata"
+	"github.com/YouCD/music_metadata/provider"
 
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -148,10 +149,17 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 	// 1. 读取文件现有元数据
 	mf, err := metadata.ReadMusicFile(filePath)
 	if err != nil {
-		// dhowden/tag 读取失败，对 WAV 文件尝试纯 Go 解析 RIFF INFO 元数据
+		// dhowden/tag 读取失败，尝试回退方案
 		if metadata.IsWAV(filePath) {
+			// WAV：纯 Go 解析 RIFF INFO 元数据
 			if wavMf, wavErr := metadata.ReadMusicFileFromWAV(filePath); wavErr == nil {
 				mf = wavMf
+				err = nil
+			}
+		} else if metadata.IsAPE(filePath) {
+			// APE：使用 ffprobe 读取元数据
+			if apeMf, apeErr := metadata.ReadMusicFileWithFFprobe(filePath); apeErr == nil {
+				mf = apeMf
 				err = nil
 			}
 		}
@@ -320,6 +328,25 @@ func writeMetadata(filePath, title, artist, album, date, lyrics string, coverDat
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)（WAV 不支持嵌入封面）", len(coverData)/1024))
+			}
+		}
+		return
+	}
+
+	// APE 格式：ffmpeg 不支持 APE muxer，所有元数据保存为外部文件
+	if metadata.IsAPE(filePath) {
+		if lyrics != "" {
+			if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
+				log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
+			} else {
+				log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件（APE 不支持嵌入歌词）")
+			}
+		}
+		if len(coverData) > 0 {
+			if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
+				log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
+			} else {
+				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)（APE 不支持嵌入封面）", len(coverData)/1024))
 			}
 		}
 		return

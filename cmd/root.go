@@ -26,7 +26,7 @@ const (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "music_metadata",
+	Use:   "github.com/YouCD/music_metadata",
 	Short: "🎵 音乐元数据补全工具",
 	Long: fmt.Sprintf("%s🎵 音乐元数据补全工具%s\n\n"+
 		"自动抓取并补全音乐文件的歌词、封面等元数据。\n"+

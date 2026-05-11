@@ -235,24 +235,25 @@ func writeMetadataWithFFmpeg(filePath, title, artist, album, date, lyrics string
 
 	case ".m4a", ".aac":
 		// M4A/AAC 格式（使用 iTunes 风格标签名）
+		// 注意：ffmpeg 对 M4A 使用 "lyrics" 而非 "©lyr"，ffmpeg 会自动映射为 ©lyr atom
 		args = append(args, "-y", "-i", filePath)
 		if tmpImg != nil {
 			args = append(args, "-i", tmpImg.Name())
 		}
 		if title != "" {
-			args = append(args, "-metadata", fmt.Sprintf("\xa9nam=%s", title))
+			args = append(args, "-metadata", fmt.Sprintf("title=%s", title))
 		}
 		if artist != "" {
-			args = append(args, "-metadata", fmt.Sprintf("\xa9ART=%s", artist))
+			args = append(args, "-metadata", fmt.Sprintf("artist=%s", artist))
 		}
 		if album != "" {
-			args = append(args, "-metadata", fmt.Sprintf("\xa9alb=%s", album))
+			args = append(args, "-metadata", fmt.Sprintf("album=%s", album))
 		}
 		if date != "" {
-			args = append(args, "-metadata", fmt.Sprintf("\xa9day=%s", date))
+			args = append(args, "-metadata", fmt.Sprintf("date=%s", date))
 		}
 		if lyrics != "" {
-			args = append(args, "-metadata", fmt.Sprintf("\xa9lyr=%s", lyrics))
+			args = append(args, "-metadata", fmt.Sprintf("lyrics=%s", lyrics))
 		}
 		if tmpImg != nil {
 			args = append(args,
@@ -328,7 +329,7 @@ func WriteLyricsFile(musicPath, lyrics string) error {
 	if _, err := os.Stat(lrcPath); err == nil {
 		return nil // 已存在，跳过
 	}
-	return os.WriteFile(lrcPath, []byte(lyrics), 0644)
+	return os.WriteFile(lrcPath, []byte(lyrics), 0o644)
 }
 
 // WriteCoverFile 将封面图片保存为独立文件
@@ -337,7 +338,7 @@ func WriteCoverFile(musicPath string, coverData []byte) error {
 	if _, err := os.Stat(coverPath); err == nil {
 		return nil // 已存在，跳过
 	}
-	return os.WriteFile(coverPath, coverData, 0644)
+	return os.WriteFile(coverPath, coverData, 0o644)
 }
 
 // IsMP3 检查文件是否为 MP3 格式
@@ -348,6 +349,11 @@ func IsMP3(filePath string) bool {
 // IsWAV 检查文件是否为 WAV 格式
 func IsWAV(filePath string) bool {
 	return strings.ToLower(filepath.Ext(filePath)) == ".wav"
+}
+
+// IsAPE 检查文件是否为 APE 格式
+func IsAPE(filePath string) bool {
+	return strings.ToLower(filepath.Ext(filePath)) == ".ape"
 }
 
 // SupportsEmbedding 检查 ffmpeg 是否可用

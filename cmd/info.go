@@ -2,10 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"music_metadata/metadata"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/YouCD/music_metadata/metadata"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
@@ -33,8 +34,10 @@ var infoCmd = &cobra.Command{
 	RunE: runInfo,
 }
 
-var showAll bool
-var showComplete bool
+var (
+	showAll      bool
+	showComplete bool
+)
 
 func init() {
 	infoCmd.Flags().BoolVarP(&showAll, "all", "a", false, "显示详细信息（年份、流派、音轨）")
@@ -108,9 +111,13 @@ func runInfo(cmd *cobra.Command, args []string) error {
 
 		mf, err := metadata.ReadMusicFile(filePath)
 		if err != nil {
-			// dhowden/tag 读取失败，尝试使用纯 Go 解析 WAV RIFF INFO 元数据
+			// dhowden/tag 读取失败，尝试回退方案
 			if metadata.IsWAV(filePath) {
+				// WAV：纯 Go 解析 RIFF LIST/INFO 元数据
 				mf, err = metadata.ReadMusicFileFromWAV(filePath)
+			} else if metadata.IsAPE(filePath) {
+				// APE：使用 ffprobe 读取元数据
+				mf, err = metadata.ReadMusicFileWithFFprobe(filePath)
 			}
 			if err != nil {
 				// 解析也失败，视为不完整，默认显示
@@ -152,8 +159,8 @@ func runInfo(cmd *cobra.Command, args []string) error {
 			coverIcon = "✅"
 		}
 
-		// 格式显示：优先使用 dhowden/tag 识别的格式，否则用文件扩展名
-		formatDisplay := string(mf.Format)
+		// 格式显示：优先使用 dhowden/tag 识别的格式，否则用文件扩展名，统一小写
+		formatDisplay := strings.ToLower(string(mf.Format))
 		if formatDisplay == "" {
 			formatDisplay = formatStr
 		}

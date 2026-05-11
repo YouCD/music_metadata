@@ -1,7 +1,7 @@
 package main
 
 import (
-	"music_metadata/cmd"
+	"github.com/YouCD/music_metadata/cmd"
 )
 
 func main() {
