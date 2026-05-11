@@ -9,10 +9,10 @@ import (
 
 var (
 	// 全局标志
-	apiBase     string
-	server      string
-	dryRun      bool
-	forceUpdate bool
+	apiBase      string
+	providerName string
+	dryRun       bool
+	forceUpdate  bool
 )
 
 // ANSI 颜色码
@@ -29,13 +29,11 @@ var rootCmd = &cobra.Command{
 	Use:   "music_metadata",
 	Short: "🎵 音乐元数据补全工具",
 	Long: fmt.Sprintf("%s🎵 音乐元数据补全工具%s\n\n"+
-		"通过 Meting API 自动抓取并补全音乐文件的歌词、封面等元数据。\n"+
+		"自动抓取并补全音乐文件的歌词、封面等元数据。\n"+
 		"支持 MP3、FLAC、M4A、OGG、WAV、APE、AIFF 等格式。\n\n"+
-		"%s支持的音乐平台:%s netease / tencent / kugou / baidu / kuwo\n"+
-		"%sAPI 地址:%s https://api.i-meto.com/meting/api (公共服务器可能已不可用)\n"+
-		"%s提示:%s 如遇到 401 错误，请自建 Meting API 服务并使用 --api 参数指定\n",
+		"%s支持的提供者:%s netease\n"+
+		"%s提示:%s 使用 --provider 指定数据源，--api 指定自定义 API 地址\n",
 		ColorBold, ColorReset,
-		ColorCyan, ColorReset,
 		ColorCyan, ColorReset,
 		ColorYellow, ColorReset,
 	),
@@ -55,8 +53,8 @@ func Execute() {
 
 func init() {
 	// 全局标志
-	rootCmd.PersistentFlags().StringVar(&apiBase, "api", "https://api.i-meto.com/meting/api", "Meting API 地址")
-	rootCmd.PersistentFlags().StringVarP(&server, "server", "s", "netease", "音乐平台 (netease/tencent/kugou/baidu/kuwo)")
+	rootCmd.PersistentFlags().StringVarP(&providerName, "provider", "p", "netease", "元数据提供者 (netease)")
+	rootCmd.PersistentFlags().StringVar(&apiBase, "api", "", "API 地址（留空使用提供者默认地址）")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "仅显示信息，不修改文件")
 	rootCmd.PersistentFlags().BoolVarP(&forceUpdate, "force", "f", false, "强制更新已有元数据")
 }

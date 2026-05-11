@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"music_metadata/metadata"
-	"music_metadata/meting"
+	"music_metadata/provider"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,11 +23,11 @@ var scanCmd = &cobra.Command{
 	Use:   "scan [目录路径]",
 	Short: "扫描目录并补全音乐元数据",
 	Long: fmt.Sprintf("%s扫描目录并补全音乐元数据%s\n\n"+
-		"递归扫描指定目录中的音乐文件，通过 Meting API 搜索匹配的歌曲，\n"+
+		"递归扫描指定目录中的音乐文件，通过音乐 API 搜索匹配的歌曲，\n"+
 		"自动获取并嵌入歌词和封面图片到音频文件中。\n\n"+
 		"%s示例:%s\n"+
 		"  music_metadata scan ./music\n"+
-		"  music_metadata scan ./music -s tencent\n"+
+		"  music_metadata scan ./music -p netease\n"+
 		"  music_metadata scan ./music --dry-run\n"+
 		"  music_metadata scan ./music --external\n"+
 		"  music_metadata scan ./music --no-lyrics --force\n",
@@ -61,11 +61,14 @@ func runScan(cmd *cobra.Command, args []string) error {
 		log.WithCtx(cmd.Context()).Warn("未找到 ffmpeg，无法嵌入元数据到非 MP3 文件。建议安装 ffmpeg 或使用 --external 选项保存为独立文件")
 	}
 
-	// 创建 Meting API 客户端
-	client := meting.NewClient(apiBase, server)
+	// 创建元数据提供者
+	p, err := newProvider(providerName, apiBase)
+	if err != nil {
+		return fmt.Errorf("创建提供者失败: %w", err)
+	}
 
-	log.WithCtx(cmd.Context()).Infof("🎵 音乐元数据补全工具 - 目录: %s, 平台: %s, 歌词: %s, 封面: %s, 模式: %s",
-		dir, server, boolToStr(!skipLyrics), boolToStr(!skipCover), modeDisplay())
+	log.WithCtx(cmd.Context()).Infof("🎵 音乐元数据补全工具 - 目录: %s, 提供者: %s, 歌词: %s, 封面: %s, 模式: %s",
+		dir, p.Name(), boolToStr(!skipLyrics), boolToStr(!skipCover), modeDisplay())
 
 	// 查找所有音乐文件
 	files, err := metadata.FindMusicFiles(dir)
@@ -92,7 +95,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		relPath, _ := filepath.Rel(dir, filePath)
 		log.WithCtx(cmd.Context()).Info(fmt.Sprintf("[%d/%d] 处理: %s", i+1, stats.total, relPath))
 
-		if err := processFile(filePath, client, cmd.Context()); err != nil {
+		if err := processFile(filePath, p, cmd.Context()); err != nil {
 			log.WithCtx(cmd.Context()).Error(fmt.Sprintf("❌ 失败: %v", err))
 			stats.failed++
 		} else {
@@ -108,7 +111,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 }
 
 // processFile 处理单个音乐文件
-func processFile(filePath string, client *meting.Client, ctx context.Context) error {
+func processFile(filePath string, p provider.Provider, ctx context.Context) error {
 	// 1. 读取文件现有元数据
 	mf, err := metadata.ReadMusicFile(filePath)
 	if err != nil {
@@ -143,7 +146,7 @@ func processFile(filePath string, client *meting.Client, ctx context.Context) er
 	log.WithCtx(ctx).Info(fmt.Sprintf("🔍 搜索: \"%s\"", keyword))
 
 	// 3. 搜索歌曲
-	songs, err := client.Search(keyword)
+	songs, err := p.Search(ctx, keyword)
 	if err != nil {
 		return fmt.Errorf("搜索失败: %w", err)
 	}
@@ -154,7 +157,7 @@ func processFile(filePath string, client *meting.Client, ctx context.Context) er
 
 	// 4. 选择最佳匹配
 	bestMatch := findBestMatch(songs, mf.Title, mf.Artist)
-	log.WithCtx(ctx).Info(fmt.Sprintf("✅ 匹配: %s - %s (ID: %s)", bestMatch.Author, bestMatch.Title, bestMatch.SongID))
+	log.WithCtx(ctx).Info(fmt.Sprintf("✅ 匹配: %s - %s (ID: %s)", bestMatch.Artist, bestMatch.Title, bestMatch.SongID))
 
 	if bestMatch.SongID == "" {
 		return fmt.Errorf("无法获取歌曲 ID")
@@ -172,9 +175,9 @@ func processFile(filePath string, client *meting.Client, ctx context.Context) er
 
 	if !skipLyrics {
 		needLyrics := !mf.HasLyrics || forceUpdate
-		if needLyrics && bestMatch.Lrc != "" {
+		if needLyrics {
 			log.WithCtx(ctx).Info("📝 获取歌词...")
-			l, err := client.GetLyricsFromURL(bestMatch.Lrc)
+			l, err := p.GetLyrics(ctx, bestMatch)
 			if err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("获取歌词失败: %v", err))
 			} else if strings.TrimSpace(l) == "" {
@@ -182,8 +185,6 @@ func processFile(filePath string, client *meting.Client, ctx context.Context) er
 			} else {
 				lyrics = l
 			}
-		} else if needLyrics {
-			log.WithCtx(ctx).Warn("歌词 URL 为空")
 		} else {
 			log.WithCtx(ctx).Info("📝 歌词已存在，跳过")
 		}
@@ -191,9 +192,9 @@ func processFile(filePath string, client *meting.Client, ctx context.Context) er
 
 	if !skipCover {
 		needCover := !mf.HasCover || forceUpdate
-		if needCover && bestMatch.Pic != "" {
+		if needCover {
 			log.WithCtx(ctx).Info("🖼️  获取封面...")
-			data, mime, err := client.DownloadCoverFromURL(bestMatch.Pic)
+			data, mime, err := p.GetCover(ctx, bestMatch)
 			if err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("获取封面失败: %v", err))
 			} else if len(data) == 0 {
@@ -202,23 +203,21 @@ func processFile(filePath string, client *meting.Client, ctx context.Context) er
 				coverData = data
 				mimeType = mime
 			}
-		} else if needCover {
-			log.WithCtx(ctx).Warn("封面 URL 为空")
 		} else {
 			log.WithCtx(ctx).Info("🖼️  封面已存在，跳过")
 		}
 	}
 
-	// 6. 同时写入歌词和封面（避免互相覆盖）
-	if lyrics != "" || len(coverData) > 0 {
-		writeMetadata(filePath, lyrics, coverData, mimeType, ctx)
+	// 6. 同时写入元数据（artist、album、date、歌词、封面）
+	if lyrics != "" || len(coverData) > 0 || bestMatch.Artist != "" || bestMatch.Album != "" || bestMatch.Date != "" {
+		writeMetadata(filePath, bestMatch.Artist, bestMatch.Album, bestMatch.Date, lyrics, coverData, mimeType, ctx)
 	}
 
 	return nil
 }
 
-// writeMetadata 同时写入歌词和封面（避免互相覆盖）
-func writeMetadata(filePath, lyrics string, coverData []byte, mimeType string, ctx context.Context) {
+// writeMetadata 同时写入元数据（artist、album、date、歌词、封面）
+func writeMetadata(filePath, artist, album, date, lyrics string, coverData []byte, mimeType string, ctx context.Context) {
 	if saveExternal {
 		// 保存为外部文件
 		if lyrics != "" {
@@ -241,38 +240,21 @@ func writeMetadata(filePath, lyrics string, coverData []byte, mimeType string, c
 	// MP3 格式使用 id3v2 库
 	if metadata.IsMP3(filePath) {
 		var err error
-		if lyrics != "" && len(coverData) > 0 {
-			err = metadata.WriteAllToMP3(filePath, "", "", "", lyrics, coverData, mimeType)
-		} else if lyrics != "" {
-			err = metadata.WriteLyricsToMP3(filePath, lyrics)
-		} else if len(coverData) > 0 {
-			err = metadata.WriteCoverToMP3(filePath, coverData, mimeType)
+		if lyrics != "" || len(coverData) > 0 || artist != "" || album != "" || date != "" {
+			err = metadata.WriteAllToMP3(filePath, "", artist, album, date, lyrics, coverData, mimeType)
 		}
 
 		if err != nil {
 			log.WithCtx(ctx).Error(fmt.Sprintf("写入失败: %v", err))
 		} else {
-			if lyrics != "" && len(coverData) > 0 {
-				log.WithCtx(ctx).Info("✅ 已嵌入歌词和封面")
-			} else if lyrics != "" {
-				log.WithCtx(ctx).Info("✅ 已嵌入歌词")
-			} else {
-				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已嵌入封面 (%d KB)", len(coverData)/1024))
-			}
+			log.WithCtx(ctx).Info("✅ 已嵌入元数据（歌手/专辑/歌词/封面）")
 		}
 		return
 	}
 
 	// 其他格式使用 ffmpeg
 	if metadata.SupportsEmbedding() {
-		var err error
-		if lyrics != "" && len(coverData) > 0 {
-			err = metadata.WriteLyricsAndCoverWithFFmpeg(filePath, lyrics, coverData, mimeType)
-		} else if lyrics != "" {
-			err = metadata.WriteLyricsWithFFmpeg(filePath, lyrics)
-		} else if len(coverData) > 0 {
-			err = metadata.WriteCoverWithFFmpeg(filePath, coverData)
-		}
+		err := metadata.WriteAllWithFFmpeg(filePath, artist, album, date, lyrics, coverData, mimeType)
 
 		if err != nil {
 			log.WithCtx(ctx).Warn(fmt.Sprintf("ffmpeg 写入失败: %v，回退到外部文件", err))
@@ -292,13 +274,7 @@ func writeMetadata(filePath, lyrics string, coverData []byte, mimeType string, c
 				}
 			}
 		} else {
-			if lyrics != "" && len(coverData) > 0 {
-				log.WithCtx(ctx).Info("✅ 已嵌入歌词和封面 (via ffmpeg)")
-			} else if lyrics != "" {
-				log.WithCtx(ctx).Info("✅ 已嵌入歌词 (via ffmpeg)")
-			} else {
-				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已嵌入封面 (via ffmpeg, %d KB)", len(coverData)/1024))
-			}
+			log.WithCtx(ctx).Info("✅ 已嵌入元数据（歌手/专辑/日期/歌词/封面 via ffmpeg）")
 		}
 		return
 	}
@@ -371,9 +347,9 @@ func buildSearchKeyword(title, artist string) string {
 }
 
 // findBestMatch 从搜索结果中选择最佳匹配
-func findBestMatch(songs []meting.SongInfo, title, artist string) meting.SongInfo {
+func findBestMatch(songs []provider.SongInfo, title, artist string) provider.SongInfo {
 	if len(songs) == 0 {
-		return meting.SongInfo{}
+		return provider.SongInfo{}
 	}
 
 	bestScore := -1
@@ -385,7 +361,7 @@ func findBestMatch(songs []meting.SongInfo, title, artist string) meting.SongInf
 	for i, song := range songs {
 		score := 0
 		songTitle := strings.ToLower(song.Title)
-		songAuthor := strings.ToLower(song.Author)
+		songArtist := strings.ToLower(song.Artist)
 
 		// 标题完全匹配
 		if songTitle == titleLower {
@@ -395,9 +371,9 @@ func findBestMatch(songs []meting.SongInfo, title, artist string) meting.SongInf
 		}
 
 		// 歌手匹配
-		if songAuthor == artistLower {
+		if songArtist == artistLower {
 			score += 80
-		} else if strings.Contains(songAuthor, artistLower) || strings.Contains(artistLower, songAuthor) {
+		} else if strings.Contains(songArtist, artistLower) || strings.Contains(artistLower, songArtist) {
 			score += 40
 		}
 
@@ -438,4 +414,14 @@ func modeDisplay() string {
 		return "外部文件模式（保存为 .lrc/.jpg）"
 	}
 	return "嵌入模式"
+}
+
+// newProvider 根据名称创建元数据提供者
+func newProvider(name, apiBase string) (provider.Provider, error) {
+	switch name {
+	case "netease":
+		return provider.NewNetEaseProvider(apiBase), nil
+	default:
+		return nil, fmt.Errorf("未知的提供者: %s，可选: netease", name)
+	}
 }

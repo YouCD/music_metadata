@@ -85,7 +85,7 @@ func WriteMetadataToMP3(filePath, title, artist, album string) error {
 }
 
 // WriteAllToMP3 一次性写入所有 MP3 元数据
-func WriteAllToMP3(filePath, title, artist, album, lyrics string, coverData []byte, mimeType string) error {
+func WriteAllToMP3(filePath, title, artist, album, date, lyrics string, coverData []byte, mimeType string) error {
 	tag, err := id3v2.Open(filePath, id3v2.Options{Parse: true})
 	if err != nil {
 		return fmt.Errorf("打开 MP3 文件失败: %w", err)
@@ -100,6 +100,9 @@ func WriteAllToMP3(filePath, title, artist, album, lyrics string, coverData []by
 	}
 	if album != "" {
 		tag.SetAlbum(album)
+	}
+	if date != "" {
+		tag.SetYear(date)
 	}
 
 	if lyrics != "" {
@@ -134,21 +137,26 @@ func WriteAllToMP3(filePath, title, artist, album, lyrics string, coverData []by
 // WriteLyricsWithFFmpeg 使用 ffmpeg 将歌词嵌入到音频文件中（支持 FLAC、M4A、OGG 等）
 // 对于 FLAC 文件，歌词写入 LYRICS 标签；对于其他格式，尝试写入 COMMENT 或对应标签
 func WriteLyricsWithFFmpeg(filePath, lyrics string) error {
-	return writeMetadataWithFFmpeg(filePath, lyrics, nil, "")
+	return writeMetadataWithFFmpeg(filePath, "", "", "", lyrics, nil, "")
 }
 
 // WriteCoverWithFFmpeg 使用 ffmpeg 将封面图片嵌入到音频文件中
 func WriteCoverWithFFmpeg(filePath string, coverData []byte) error {
-	return writeMetadataWithFFmpeg(filePath, "", coverData, "")
+	return writeMetadataWithFFmpeg(filePath, "", "", "", "", coverData, "")
 }
 
 // WriteLyricsAndCoverWithFFmpeg 同时写入歌词和封面（避免多次重写文件）
 func WriteLyricsAndCoverWithFFmpeg(filePath, lyrics string, coverData []byte, mimeType string) error {
-	return writeMetadataWithFFmpeg(filePath, lyrics, coverData, mimeType)
+	return writeMetadataWithFFmpeg(filePath, "", "", "", lyrics, coverData, mimeType)
 }
 
-// writeMetadataWithFFmpeg 内部函数：同时写入歌词和/或封面
-func writeMetadataWithFFmpeg(filePath, lyrics string, coverData []byte, mimeType string) error {
+// WriteAllWithFFmpeg 使用 ffmpeg 一次性写入所有元数据（artist、album、date、歌词、封面）
+func WriteAllWithFFmpeg(filePath, artist, album, date, lyrics string, coverData []byte, mimeType string) error {
+	return writeMetadataWithFFmpeg(filePath, artist, album, date, lyrics, coverData, mimeType)
+}
+
+// writeMetadataWithFFmpeg 内部函数：同时写入元数据（artist、album、date、歌词和/或封面）
+func writeMetadataWithFFmpeg(filePath, artist, album, date, lyrics string, coverData []byte, mimeType string) error {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	tmpOut := filePath + ".tmp" + ext
 
@@ -173,10 +181,19 @@ func writeMetadataWithFFmpeg(filePath, lyrics string, coverData []byte, mimeType
 
 	switch ext {
 	case ".flac":
-		// FLAC 格式：同时处理歌词和封面（使用小写字段名）
+		// FLAC 格式：同时处理元数据和封面
 		args = append(args, "-y", "-i", filePath)
 		if tmpImg != nil {
 			args = append(args, "-i", tmpImg.Name())
+		}
+		if artist != "" {
+			args = append(args, "-metadata", fmt.Sprintf("artist=%s", artist))
+		}
+		if album != "" {
+			args = append(args, "-metadata", fmt.Sprintf("album=%s", album))
+		}
+		if date != "" {
+			args = append(args, "-metadata", fmt.Sprintf("date=%s", date))
 		}
 		if lyrics != "" {
 			args = append(args, "-metadata", fmt.Sprintf("lyrics=%s", lyrics))
@@ -196,10 +213,19 @@ func writeMetadataWithFFmpeg(filePath, lyrics string, coverData []byte, mimeType
 		args = append(args, tmpOut)
 
 	case ".m4a", ".aac":
-		// M4A/AAC 格式（使用小写字段名）
+		// M4A/AAC 格式（使用 iTunes 风格标签名）
 		args = append(args, "-y", "-i", filePath)
 		if tmpImg != nil {
 			args = append(args, "-i", tmpImg.Name())
+		}
+		if artist != "" {
+			args = append(args, "-metadata", fmt.Sprintf("\xa9ART=%s", artist))
+		}
+		if album != "" {
+			args = append(args, "-metadata", fmt.Sprintf("\xa9alb=%s", album))
+		}
+		if date != "" {
+			args = append(args, "-metadata", fmt.Sprintf("\xa9day=%s", date))
 		}
 		if lyrics != "" {
 			args = append(args, "-metadata", fmt.Sprintf("\xa9lyr=%s", lyrics))
@@ -219,10 +245,19 @@ func writeMetadataWithFFmpeg(filePath, lyrics string, coverData []byte, mimeType
 		args = append(args, tmpOut)
 
 	default:
-		// 通用方式（使用小写字段名）
+		// 通用方式
 		args = append(args, "-y", "-i", filePath)
 		if tmpImg != nil {
 			args = append(args, "-i", tmpImg.Name())
+		}
+		if artist != "" {
+			args = append(args, "-metadata", fmt.Sprintf("artist=%s", artist))
+		}
+		if album != "" {
+			args = append(args, "-metadata", fmt.Sprintf("album=%s", album))
+		}
+		if date != "" {
+			args = append(args, "-metadata", fmt.Sprintf("date=%s", date))
 		}
 		if lyrics != "" {
 			args = append(args, "-metadata", fmt.Sprintf("lyrics=%s", lyrics))
@@ -246,7 +281,7 @@ func writeMetadataWithFFmpeg(filePath, lyrics string, coverData []byte, mimeType
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		os.Remove(tmpOut)
-		return fmt.Errorf("ffmpeg 写入歌词失败: %w", err)
+		return fmt.Errorf("ffmpeg 写入元数据失败: %w", err)
 	}
 
 	// 替换原文件
