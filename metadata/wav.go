@@ -116,31 +116,40 @@ func parseINFOChunks(f *os.File, start, end int64, tags map[string]string) {
 	}
 }
 
+// WAV INFO chunk ID 到标准标签 key 的映射
+var wavTagMapping = map[string]string{
+	wavInfoTitle:   TagTitle,
+	wavInfoArtist:  TagArtist,
+	wavInfoAlbum:   TagAlbum,
+	wavInfoDate:    TagDate,
+	wavInfoGenre:   TagGenre,
+	wavInfoComment: TagComment,
+	wavInfoTrack:   TagTrack,
+}
+
 // ReadMusicFileFromWAV 使用纯 Go 读取 WAV 文件元数据，返回 MusicFile
 func ReadMusicFileFromWAV(filePath string) (*MusicFile, error) {
-	tags, err := ReadWAVMetadata(filePath)
+	wavTags, err := ReadWAVMetadata(filePath)
 	if err != nil {
 		return nil, err
 	}
 
 	mf := &MusicFile{
 		FilePath: filePath,
+		Tags:     make(map[string]string),
 	}
 
-	if v, ok := tags[wavInfoTitle]; ok {
-		mf.Title = v
-	}
-	if v, ok := tags[wavInfoArtist]; ok {
-		mf.Artist = v
-	}
-	if v, ok := tags[wavInfoAlbum]; ok {
-		mf.Album = v
-	}
-	if v, ok := tags[wavInfoDate]; ok {
-		mf.Year = v
-	}
-	if v, ok := tags[wavInfoGenre]; ok {
-		mf.Genre = v
+	// 将 WAV INFO chunk 标签映射到标准 Tags
+	for wavKey, wavValue := range wavTags {
+		if wavValue == "" {
+			continue
+		}
+		if stdKey, ok := wavTagMapping[wavKey]; ok {
+			mf.Tags[stdKey] = wavValue
+		} else {
+			// 未知标签，用原始 key（小写）存储
+			mf.Tags[strings.ToLower(wavKey)] = wavValue
+		}
 	}
 
 	// 检查是否有外部歌词文件

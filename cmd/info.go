@@ -87,10 +87,97 @@ func runInfo(cmd *cobra.Command, args []string) error {
 		files = []string{absPath}
 	}
 
-	// 构建表头
-	headers := []string{"#", "文件", "标题", "歌手", "专辑", "格式", "歌词", "封面"}
+	// 扩展列定义：key 和对应的 getter 函数
+	type extColumn struct {
+		key    string
+		getter func(*metadata.MusicFile) string
+	}
+	extColumns := []extColumn{
+		{"date", (*metadata.MusicFile).GetDate},
+		{"genre", (*metadata.MusicFile).GetGenre},
+		{"track", (*metadata.MusicFile).GetTrack},
+		{"comment", (*metadata.MusicFile).GetComment},
+		{"composer", (*metadata.MusicFile).GetComposer},
+		{"album_artist", (*metadata.MusicFile).GetAlbumArtist},
+		{"copyright", (*metadata.MusicFile).GetCopyright},
+	}
+
+	// 第一遍：收集所有文件数据
+	type fileInfo struct {
+		relPath string
+		mf      *metadata.MusicFile
+		format  string
+		readErr bool
+	}
+	var infos []fileInfo
+
+	for _, filePath := range files {
+		relPath, _ := filepath.Rel(baseDir, filePath)
+		ext := strings.ToLower(filepath.Ext(filePath))
+		formatStr := strings.TrimPrefix(ext, ".")
+
+		mf, err := metadata.ReadMusicFile(filePath)
+		if err != nil {
+			// dhowden/tag 读取失败，尝试回退方案
+			if metadata.IsWAV(filePath) {
+				mf, err = metadata.ReadMusicFileFromWAV(filePath)
+			}
+		}
+
+		// 尝试用 ffprobe 补充更多标签（ffprobe 能读取更多字段）
+		if metadata.SupportsEmbedding() {
+			if probeMf, probeErr := metadata.ReadMusicFileWithFFprobe(filePath); probeErr == nil && probeMf.Tags != nil {
+				if mf == nil {
+					mf = probeMf
+					err = nil
+				} else if mf.Tags == nil {
+					mf.Tags = probeMf.Tags
+				} else {
+					for k, v := range probeMf.Tags {
+						if _, exists := mf.Tags[k]; !exists && v != "" {
+							mf.Tags[k] = v
+						}
+					}
+				}
+				if probeMf.HasLyrics {
+					mf.HasLyrics = true
+				}
+				if probeMf.HasCover {
+					mf.HasCover = true
+				}
+			}
+		}
+
+		fi := fileInfo{
+			relPath: relPath,
+			mf:      mf,
+			format:  formatStr,
+			readErr: err != nil && mf == nil,
+		}
+		infos = append(infos, fi)
+	}
+
+	// 判断哪些扩展列有值（至少一个文件有非空值）
+	activeExtCols := make([]extColumn, 0, len(extColumns))
 	if showAll {
-		headers = append(headers, "年份", "流派", "音轨")
+		for _, col := range extColumns {
+			hasValue := false
+			for _, fi := range infos {
+				if fi.mf != nil && col.getter(fi.mf) != "" {
+					hasValue = true
+					break
+				}
+			}
+			if hasValue {
+				activeExtCols = append(activeExtCols, col)
+			}
+		}
+	}
+
+	// 构建表头
+	headers := []string{"#", "文件", "title", "artist", "album", "格式", "歌词", "封面"}
+	for _, col := range activeExtCols {
+		headers = append(headers, col.key)
 	}
 
 	// 创建表格
@@ -102,90 +189,64 @@ func runInfo(cmd *cobra.Command, args []string) error {
 	)
 	table.Header(headers)
 
-	// 填充数据
+	// 第二遍：填充数据
 	rowNum := 0
-	for _, filePath := range files {
-		relPath, _ := filepath.Rel(baseDir, filePath)
-		ext := strings.ToLower(filepath.Ext(filePath))
-		formatStr := strings.TrimPrefix(ext, ".")
-
-		mf, err := metadata.ReadMusicFile(filePath)
-		if err != nil {
-			// dhowden/tag 读取失败，尝试回退方案
-			if metadata.IsWAV(filePath) {
-				// WAV：纯 Go 解析 RIFF LIST/INFO 元数据
-				mf, err = metadata.ReadMusicFileFromWAV(filePath)
-			} else if metadata.IsAPE(filePath) {
-				// APE：使用 ffprobe 读取元数据
-				mf, err = metadata.ReadMusicFileWithFFprobe(filePath)
+	for _, fi := range infos {
+		if fi.readErr {
+			// 所有方式都失败，视为不完整，默认显示
+			rowNum++
+			row := []string{
+				fmt.Sprintf("%d", rowNum),
+				fi.relPath,
+				"-",
+				"-",
+				"-",
+				fi.format,
+				"❌",
+				"❌",
 			}
-			if err != nil {
-				// 解析也失败，视为不完整，默认显示
-				if !showComplete {
-					// 不完整的文件默认就显示，无需跳过
-				}
-				rowNum++
-				row := []string{
-					fmt.Sprintf("%d", rowNum),
-					relPath,
-					"-",
-					"-",
-					"-",
-					formatStr,
-					"❌",
-					"❌",
-				}
-				if showAll {
-					row = append(row, "-", "-", "-")
-				}
-				table.Append(row)
-				continue
+			for range activeExtCols {
+				row = append(row, "-")
 			}
+			table.Append(row)
+			continue
 		}
 
 		// 默认只显示元信息不完整的文件，使用 --complete/-c 显示所有
-		if !showComplete && mf.IsComplete() {
+		if !showComplete && fi.mf.IsComplete() {
 			continue
 		}
 
 		rowNum++
 
 		lyricsIcon := "❌"
-		if mf.HasLyrics {
+		if fi.mf.HasLyrics {
 			lyricsIcon = "✅"
 		}
 		coverIcon := "❌"
-		if mf.HasCover {
+		if fi.mf.HasCover {
 			coverIcon = "✅"
 		}
 
 		// 格式显示：优先使用 dhowden/tag 识别的格式，否则用文件扩展名，统一小写
-		formatDisplay := strings.ToLower(string(mf.Format))
+		formatDisplay := strings.ToLower(string(fi.mf.Format))
 		if formatDisplay == "" {
-			formatDisplay = formatStr
+			formatDisplay = fi.format
 		}
 
 		row := []string{
 			fmt.Sprintf("%d", rowNum),
-			relPath,
-			displayValue(mf.Title),
-			displayValue(mf.Artist),
-			displayValue(mf.Album),
+			fi.relPath,
+			displayValue(fi.mf.GetTitle()),
+			displayValue(fi.mf.GetArtist()),
+			displayValue(fi.mf.GetAlbum()),
 			formatDisplay,
 			lyricsIcon,
 			coverIcon,
 		}
 
-		if showAll {
-			track := ""
-			if mf.Track != 0 {
-				track = fmt.Sprintf("%d", mf.Track)
-			}
-			row = append(row,
-				displayValue(mf.Year),
-				displayValue(mf.Genre),
-				displayValue(track),
-			)
+		for _, col := range activeExtCols {
+			row = append(row, displayValue(col.getter(fi.mf)))
 		}
 
 		table.Append(row)

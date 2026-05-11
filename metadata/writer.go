@@ -356,6 +356,138 @@ func IsAPE(filePath string) bool {
 	return strings.ToLower(filepath.Ext(filePath)) == ".ape"
 }
 
+// RemoveMetadataFromMP3 从 MP3 文件中删除指定的元数据标签
+// tags 参数指定要删除的标签名（如 "title", "artist", "album", "lyrics", "cover" 等）
+func RemoveMetadataFromMP3(filePath string, tags []string) error {
+	tag, err := id3v2.Open(filePath, id3v2.Options{Parse: true})
+	if err != nil {
+		return fmt.Errorf("打开 MP3 文件失败: %w", err)
+	}
+	defer tag.Close()
+
+	for _, t := range tags {
+		switch strings.ToLower(t) {
+		case TagTitle, "tit2":
+			tag.SetTitle("")
+		case TagArtist, "tpe1":
+			tag.SetArtist("")
+		case TagAlbum, "talb":
+			tag.SetAlbum("")
+		case TagDate, "year", "tdrc":
+			tag.SetYear("")
+		case TagGenre, "tcon":
+			tag.SetGenre("")
+		case "lyrics", "uslt":
+			tag.DeleteFrames("USLT")
+		case "cover", "apic":
+			tag.DeleteFrames("APIC")
+		case TagComment, "comm":
+			tag.DeleteFrames("COMM")
+		case TagComposer, "tcom":
+			tag.DeleteFrames("TCOM")
+		case TagAlbumArtist, "tpe2":
+			tag.DeleteFrames("TPE2")
+		case TagCopyright, "tcop":
+			tag.DeleteFrames("TCOP")
+		case TagTrack, "trck":
+			tag.DeleteFrames("TRCK")
+		case TagDisc, "tpos":
+			tag.DeleteFrames("TPOS")
+		default:
+			// 尝试删除自定义帧（大写帧 ID）
+			tag.DeleteFrames(strings.ToUpper(t))
+		}
+	}
+
+	if err := tag.Save(); err != nil {
+		return fmt.Errorf("保存 MP3 元数据失败: %w", err)
+	}
+
+	return nil
+}
+
+// RemoveMetadataWithFFmpeg 使用 ffmpeg 从音频文件中删除指定的元数据标签
+// 通过设置 -metadata:key="" 来清除标签值
+func RemoveMetadataWithFFmpeg(filePath string, tags []string) error {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	tmpOut := filePath + ".tmp" + ext
+
+	var args []string
+	args = append(args, "-y", "-i", filePath)
+
+	// 为每个要删除的标签添加 -metadata:key="" 参数
+	for _, t := range tags {
+		args = append(args, "-metadata", fmt.Sprintf("%s=", t))
+	}
+
+	// APE 格式不支持 ffmpeg muxer
+	if IsAPE(filePath) {
+		return fmt.Errorf("APE 格式不支持删除内嵌元数据")
+	}
+
+	// WAV 格式：只支持基础元数据删除
+	if IsWAV(filePath) {
+		args = append(args, "-c:a", "copy", tmpOut)
+	} else {
+		// 其他格式：同时清除封面（如果有 cover 标签）
+		hasCover := false
+		for _, t := range tags {
+			if strings.ToLower(t) == "cover" {
+				hasCover = true
+				break
+			}
+		}
+		if hasCover {
+			args = append(args, "-map", "0:a", "-c:a", "copy")
+		} else {
+			args = append(args, "-c:a", "copy", "-c:v", "copy")
+		}
+		args = append(args, tmpOut)
+	}
+
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		os.Remove(tmpOut)
+		return fmt.Errorf("ffmpeg 删除元数据失败: %w", err)
+	}
+
+	if err := os.Rename(tmpOut, filePath); err != nil {
+		os.Remove(tmpOut)
+		return fmt.Errorf("替换原文件失败: %w", err)
+	}
+
+	return nil
+}
+
+// RemoveExternalFiles 删除与音乐文件关联的外部歌词和封面文件
+// tags 参数指定要删除的类型："lyrics" 删除 .lrc 文件，"cover" 删除 .jpg 文件
+func RemoveExternalFiles(filePath string, tags []string) []string {
+	var removed []string
+
+	for _, t := range tags {
+		switch strings.ToLower(t) {
+		case "lyrics":
+			lrcPath := strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".lrc"
+			if _, err := os.Stat(lrcPath); err == nil {
+				if err := os.Remove(lrcPath); err == nil {
+					removed = append(removed, lrcPath)
+				}
+			}
+		case "cover":
+			coverPath := strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".jpg"
+			if _, err := os.Stat(coverPath); err == nil {
+				if err := os.Remove(coverPath); err == nil {
+					removed = append(removed, coverPath)
+				}
+			}
+		}
+	}
+
+	return removed
+}
+
 // SupportsEmbedding 检查 ffmpeg 是否可用
 func SupportsEmbedding() bool {
 	_, err := exec.LookPath("ffmpeg")

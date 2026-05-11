@@ -173,27 +173,27 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 	guessed := guessFromFilename(filePath)
 
 	// 如果标题为空，使用文件名推断的标题
-	if mf.Title == "" {
-		if guessed.Title != "" {
-			mf.Title = guessed.Title
-			log.WithCtx(ctx).Info(fmt.Sprintf("💡 从文件名推断标题: %s", mf.Title))
+	if mf.GetTitle() == "" {
+		if guessed.GetTitle() != "" {
+			mf.Tags[metadata.TagTitle] = guessed.GetTitle()
+			log.WithCtx(ctx).Info(fmt.Sprintf("💡 从文件名推断标题: %s", mf.GetTitle()))
 		} else {
 			// 如果无法从文件名推断，使用不带扩展名的文件名作为标题
 			name := filepath.Base(filePath)
 			name = strings.TrimSuffix(name, filepath.Ext(name))
-			mf.Title = name
-			log.WithCtx(ctx).Info(fmt.Sprintf("💡 使用文件名作为标题: %s", mf.Title))
+			mf.Tags[metadata.TagTitle] = name
+			log.WithCtx(ctx).Info(fmt.Sprintf("💡 使用文件名作为标题: %s", mf.GetTitle()))
 		}
 	}
 
 	// 如果歌手为空，使用文件名推断的歌手
-	if mf.Artist == "" && guessed.Artist != "" {
-		mf.Artist = guessed.Artist
-		log.WithCtx(ctx).Info(fmt.Sprintf("💡 从文件名推断歌手: %s", mf.Artist))
+	if mf.GetArtist() == "" && guessed.GetArtist() != "" {
+		mf.Tags[metadata.TagArtist] = guessed.GetArtist()
+		log.WithCtx(ctx).Info(fmt.Sprintf("💡 从文件名推断歌手: %s", mf.GetArtist()))
 	}
 
 	log.WithCtx(ctx).Infof("文件信息 - 标题: %s, 歌手: %s, 专辑: %s, 有歌词: %v, 有封面: %v",
-		mf.Title, mf.Artist, mf.Album, mf.HasLyrics, mf.HasCover)
+		mf.GetTitle(), mf.GetArtist(), mf.GetAlbum(), mf.HasLyrics, mf.HasCover)
 
 	// 检查元信息是否完整，完整则跳过（非强制更新模式下）
 	if !forceUpdate && mf.IsComplete() {
@@ -203,13 +203,13 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 
 	// 2. 构建搜索关键词
 	// 优先使用文件名中推断的歌手和标题信息，因为文件名通常比内嵌元数据更准确
-	searchArtist := mf.Artist
-	if guessed.Artist != "" {
-		searchArtist = guessed.Artist
+	searchArtist := mf.GetArtist()
+	if guessed.GetArtist() != "" {
+		searchArtist = guessed.GetArtist()
 	}
-	searchTitle := mf.Title
-	if guessed.Title != "" {
-		searchTitle = guessed.Title
+	searchTitle := mf.GetTitle()
+	if guessed.GetTitle() != "" {
+		searchTitle = guessed.GetTitle()
 	}
 	keyword := buildSearchKeyword(searchTitle, searchArtist)
 	log.WithCtx(ctx).Info(fmt.Sprintf("🔍 搜索: \"%s\"", keyword))
@@ -438,14 +438,18 @@ func guessFromFilename(filePath string) *metadata.MusicFile {
 	case 2:
 		return &metadata.MusicFile{
 			FilePath: filePath,
-			Artist:   strings.TrimSpace(parts[0]),
-			Title:    strings.TrimSpace(parts[1]),
+			Tags: map[string]string{
+				metadata.TagArtist: strings.TrimSpace(parts[0]),
+				metadata.TagTitle:  strings.TrimSpace(parts[1]),
+			},
 		}
 	default:
 		// 无法解析，使用整个文件名作为标题
 		return &metadata.MusicFile{
 			FilePath: filePath,
-			Title:    name,
+			Tags: map[string]string{
+				metadata.TagTitle: name,
+			},
 		}
 	}
 }
