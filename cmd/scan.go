@@ -202,12 +202,16 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 	}
 
 	// 2. 构建搜索关键词
-	// 优先使用文件名中推断的歌手信息，因为文件名通常更准确
+	// 优先使用文件名中推断的歌手和标题信息，因为文件名通常比内嵌元数据更准确
 	searchArtist := mf.Artist
 	if guessed.Artist != "" {
 		searchArtist = guessed.Artist
 	}
-	keyword := buildSearchKeyword(mf.Title, searchArtist)
+	searchTitle := mf.Title
+	if guessed.Title != "" {
+		searchTitle = guessed.Title
+	}
+	keyword := buildSearchKeyword(searchTitle, searchArtist)
 	log.WithCtx(ctx).Info(fmt.Sprintf("🔍 搜索: \"%s\"", keyword))
 
 	// 3. 搜索歌曲
@@ -220,8 +224,8 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 		return fmt.Errorf("未找到匹配的歌曲")
 	}
 
-	// 4. 选择最佳匹配（使用文件名推断的歌手信息进行匹配）
-	bestMatch := findBestMatch(songs, mf.Title, searchArtist)
+	// 4. 选择最佳匹配（使用文件名推断的标题和歌手信息进行匹配）
+	bestMatch := findBestMatch(songs, searchTitle, searchArtist)
 	log.WithCtx(ctx).Info(fmt.Sprintf("✅ 匹配: %s - %s (ID: %s)", bestMatch.Artist, bestMatch.Title, bestMatch.SongID))
 
 	if bestMatch.SongID == "" {
