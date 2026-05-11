@@ -148,8 +148,17 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 	// 1. 读取文件现有元数据
 	mf, err := metadata.ReadMusicFile(filePath)
 	if err != nil {
-		log.WithCtx(ctx).Warn(fmt.Sprintf("⚠️  读取元数据失败: %v，尝试从文件名推断", err))
-		mf = guessFromFilename(filePath)
+		// dhowden/tag 读取失败，对 WAV 文件尝试纯 Go 解析 RIFF INFO 元数据
+		if metadata.IsWAV(filePath) {
+			if wavMf, wavErr := metadata.ReadMusicFileFromWAV(filePath); wavErr == nil {
+				mf = wavMf
+				err = nil
+			}
+		}
+		if err != nil {
+			log.WithCtx(ctx).Warn(fmt.Sprintf("⚠️  读取元数据失败: %v，尝试从文件名推断", err))
+			mf = guessFromFilename(filePath)
+		}
 	}
 
 	// 从文件名推断信息，用于补充缺失的元数据和优化搜索
@@ -280,6 +289,37 @@ func writeMetadata(filePath, title, artist, album, date, lyrics string, coverDat
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)", len(coverData)/1024))
+			}
+		}
+		return
+	}
+
+	// WAV 格式：只支持基础元数据嵌入，歌词和封面保存为外部文件
+	if metadata.IsWAV(filePath) {
+		// 写入基础元数据（标题、歌手、专辑、日期）
+		if title != "" || artist != "" || album != "" || date != "" {
+			if metadata.SupportsEmbedding() {
+				err := metadata.WriteAllWithFFmpeg(filePath, title, artist, album, date, "", nil, "")
+				if err != nil {
+					log.WithCtx(ctx).Error(fmt.Sprintf("写入 WAV 元数据失败: %v", err))
+				} else {
+					log.WithCtx(ctx).Info("✅ 已嵌入基础元数据（标题/歌手/专辑/日期 via ffmpeg）")
+				}
+			}
+		}
+		// 歌词和封面保存为外部文件
+		if lyrics != "" {
+			if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
+				log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
+			} else {
+				log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件（WAV 不支持嵌入歌词）")
+			}
+		}
+		if len(coverData) > 0 {
+			if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
+				log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
+			} else {
+				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)（WAV 不支持嵌入封面）", len(coverData)/1024))
 			}
 		}
 		return

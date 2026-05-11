@@ -180,6 +180,24 @@ func writeMetadataWithFFmpeg(filePath, title, artist, album, date, lyrics string
 	}
 
 	switch ext {
+	case ".wav":
+		// WAV 格式：只支持基础元数据（标题、歌手、专辑、日期），不支持嵌入歌词和封面
+		args = append(args, "-y", "-i", filePath)
+		if title != "" {
+			args = append(args, "-metadata", fmt.Sprintf("title=%s", title))
+		}
+		if artist != "" {
+			args = append(args, "-metadata", fmt.Sprintf("artist=%s", artist))
+		}
+		if album != "" {
+			args = append(args, "-metadata", fmt.Sprintf("album=%s", album))
+		}
+		if date != "" {
+			args = append(args, "-metadata", fmt.Sprintf("date=%s", date))
+		}
+		// WAV 不支持嵌入歌词和封面，跳过 lyrics 和 coverData
+		args = append(args, "-c:a", "copy", tmpOut)
+
 	case ".flac":
 		// FLAC 格式：同时处理元数据和封面
 		args = append(args, "-y", "-i", filePath)
@@ -325,6 +343,11 @@ func WriteCoverFile(musicPath string, coverData []byte) error {
 // IsMP3 检查文件是否为 MP3 格式
 func IsMP3(filePath string) bool {
 	return strings.ToLower(filepath.Ext(filePath)) == ".mp3"
+}
+
+// IsWAV 检查文件是否为 WAV 格式
+func IsWAV(filePath string) bool {
+	return strings.ToLower(filepath.Ext(filePath)) == ".wav"
 }
 
 // SupportsEmbedding 检查 ffmpeg 是否可用

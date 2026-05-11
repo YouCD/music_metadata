@@ -18,11 +18,14 @@ var infoCmd = &cobra.Command{
 	Short: "查看音乐文件的元数据信息",
 	Long: fmt.Sprintf("%s查看音乐文件的元数据信息%s\n\n"+
 		"显示指定音乐文件或目录中所有音乐文件的元数据，\n"+
-		"包括标题、歌手、专辑、歌词、封面等信息。\n\n"+
+		"包括标题、歌手、专辑、歌词、封面等信息。\n"+
+		"默认只显示元信息不完整的文件，使用 --complete 显示所有。\n\n"+
 		"%s示例:%s\n"+
 		"  music_metadata info song.flac\n"+
 		"  music_metadata info ./music\n"+
-		"  music_metadata info ./music --all\n",
+		"  music_metadata info ./music --all\n"+
+		"  music_metadata info ./music --complete\n"+
+		"  music_metadata info ./music -ac\n",
 		ColorBold, ColorReset,
 		ColorCyan, ColorReset,
 	),
@@ -31,9 +34,11 @@ var infoCmd = &cobra.Command{
 }
 
 var showAll bool
+var showComplete bool
 
 func init() {
 	infoCmd.Flags().BoolVarP(&showAll, "all", "a", false, "显示详细信息（年份、流派、音轨）")
+	infoCmd.Flags().BoolVarP(&showComplete, "complete", "c", false, "显示元信息完整的音乐文件（默认只显示不完整的）")
 	rootCmd.AddCommand(infoCmd)
 }
 
@@ -95,30 +100,48 @@ func runInfo(cmd *cobra.Command, args []string) error {
 	table.Header(headers)
 
 	// 填充数据
-	for i, filePath := range files {
+	rowNum := 0
+	for _, filePath := range files {
 		relPath, _ := filepath.Rel(baseDir, filePath)
 		ext := strings.ToLower(filepath.Ext(filePath))
 		formatStr := strings.TrimPrefix(ext, ".")
 
 		mf, err := metadata.ReadMusicFile(filePath)
 		if err != nil {
-			// 读取元数据失败时，仍然显示文件名和格式
-			row := []string{
-				fmt.Sprintf("%d", i+1),
-				relPath,
-				"-",
-				"-",
-				"-",
-				formatStr,
-				"❌",
-				"❌",
+			// dhowden/tag 读取失败，尝试使用纯 Go 解析 WAV RIFF INFO 元数据
+			if metadata.IsWAV(filePath) {
+				mf, err = metadata.ReadMusicFileFromWAV(filePath)
 			}
-			if showAll {
-				row = append(row, "-", "-", "-")
+			if err != nil {
+				// 解析也失败，视为不完整，默认显示
+				if !showComplete {
+					// 不完整的文件默认就显示，无需跳过
+				}
+				rowNum++
+				row := []string{
+					fmt.Sprintf("%d", rowNum),
+					relPath,
+					"-",
+					"-",
+					"-",
+					formatStr,
+					"❌",
+					"❌",
+				}
+				if showAll {
+					row = append(row, "-", "-", "-")
+				}
+				table.Append(row)
+				continue
 			}
-			table.Append(row)
+		}
+
+		// 默认只显示元信息不完整的文件，使用 --complete/-c 显示所有
+		if !showComplete && mf.IsComplete() {
 			continue
 		}
+
+		rowNum++
 
 		lyricsIcon := "❌"
 		if mf.HasLyrics {
@@ -129,13 +152,19 @@ func runInfo(cmd *cobra.Command, args []string) error {
 			coverIcon = "✅"
 		}
 
+		// 格式显示：优先使用 dhowden/tag 识别的格式，否则用文件扩展名
+		formatDisplay := string(mf.Format)
+		if formatDisplay == "" {
+			formatDisplay = formatStr
+		}
+
 		row := []string{
-			fmt.Sprintf("%d", i+1),
+			fmt.Sprintf("%d", rowNum),
 			relPath,
 			displayValue(mf.Title),
 			displayValue(mf.Artist),
 			displayValue(mf.Album),
-			string(mf.Format),
+			formatDisplay,
 			lyricsIcon,
 			coverIcon,
 		}
