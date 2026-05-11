@@ -134,38 +134,112 @@ func WriteAllToMP3(filePath, title, artist, album, lyrics string, coverData []by
 // WriteLyricsWithFFmpeg 使用 ffmpeg 将歌词嵌入到音频文件中（支持 FLAC、M4A、OGG 等）
 // 对于 FLAC 文件，歌词写入 LYRICS 标签；对于其他格式，尝试写入 COMMENT 或对应标签
 func WriteLyricsWithFFmpeg(filePath, lyrics string) error {
+	return writeMetadataWithFFmpeg(filePath, lyrics, nil, "")
+}
+
+// WriteCoverWithFFmpeg 使用 ffmpeg 将封面图片嵌入到音频文件中
+func WriteCoverWithFFmpeg(filePath string, coverData []byte) error {
+	return writeMetadataWithFFmpeg(filePath, "", coverData, "")
+}
+
+// WriteLyricsAndCoverWithFFmpeg 同时写入歌词和封面（避免多次重写文件）
+func WriteLyricsAndCoverWithFFmpeg(filePath, lyrics string, coverData []byte, mimeType string) error {
+	return writeMetadataWithFFmpeg(filePath, lyrics, coverData, mimeType)
+}
+
+// writeMetadataWithFFmpeg 内部函数：同时写入歌词和/或封面
+func writeMetadataWithFFmpeg(filePath, lyrics string, coverData []byte, mimeType string) error {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	tmpOut := filePath + ".tmp" + ext
 
 	var args []string
+
+	// 如果有封面数据，先写入临时图片文件
+	var tmpImg *os.File
+	if len(coverData) > 0 {
+		var err error
+		tmpImg, err = os.CreateTemp("", "cover-*.jpg")
+		if err != nil {
+			return fmt.Errorf("创建临时封面文件失败: %w", err)
+		}
+		defer os.Remove(tmpImg.Name())
+
+		if _, err := tmpImg.Write(coverData); err != nil {
+			tmpImg.Close()
+			return fmt.Errorf("写入临时封面文件失败: %w", err)
+		}
+		tmpImg.Close()
+	}
+
 	switch ext {
 	case ".flac":
-		// FLAC 格式：直接使用 -metadata 写入 LYRICS 字段
-		args = []string{
-			"-y", "-i", filePath,
-			"-metadata", fmt.Sprintf("LYRICS=%s", lyrics),
-			"-c:a", "copy",
-			"-c:v", "copy",
-			tmpOut,
+		// FLAC 格式：同时处理歌词和封面（使用小写字段名）
+		args = append(args, "-y", "-i", filePath)
+		if tmpImg != nil {
+			args = append(args, "-i", tmpImg.Name())
 		}
+		if lyrics != "" {
+			args = append(args, "-metadata", fmt.Sprintf("lyrics=%s", lyrics))
+		}
+		if tmpImg != nil {
+			args = append(args,
+				"-map", "0:a",
+				"-map", "1:0",
+				"-c:a", "copy",
+				"-metadata:s:v", "title=Cover",
+				"-metadata:s:v", "comment=Front Cover",
+				"-disposition:v", "attached_pic",
+			)
+		} else {
+			args = append(args, "-c:a", "copy", "-c:v", "copy")
+		}
+		args = append(args, tmpOut)
+
 	case ".m4a", ".aac":
-		// M4A/AAC 格式：使用 sonilyrics 或 desc 字段
-		args = []string{
-			"-y", "-i", filePath,
-			"-metadata", fmt.Sprintf("lyrics-eng=%s", lyrics),
-			"-c:a", "copy",
-			"-c:v", "copy",
-			tmpOut,
+		// M4A/AAC 格式（使用小写字段名）
+		args = append(args, "-y", "-i", filePath)
+		if tmpImg != nil {
+			args = append(args, "-i", tmpImg.Name())
 		}
+		if lyrics != "" {
+			args = append(args, "-metadata", fmt.Sprintf("\xa9lyr=%s", lyrics))
+		}
+		if tmpImg != nil {
+			args = append(args,
+				"-map", "0:a",
+				"-map", "1:0",
+				"-c:a", "copy",
+				"-metadata:s:v", "title=Cover",
+				"-metadata:s:v", "comment=Front Cover",
+				"-disposition:v", "attached_pic",
+			)
+		} else {
+			args = append(args, "-c:a", "copy", "-c:v", "copy")
+		}
+		args = append(args, tmpOut)
+
 	default:
-		// 通用方式：直接写入 metadata
-		args = []string{
-			"-y", "-i", filePath,
-			"-metadata", fmt.Sprintf("LYRICS=%s", lyrics),
-			"-c:a", "copy",
-			"-c:v", "copy",
-			tmpOut,
+		// 通用方式（使用小写字段名）
+		args = append(args, "-y", "-i", filePath)
+		if tmpImg != nil {
+			args = append(args, "-i", tmpImg.Name())
 		}
+		if lyrics != "" {
+			args = append(args, "-metadata", fmt.Sprintf("lyrics=%s", lyrics))
+		}
+		if tmpImg != nil {
+			args = append(args,
+				"-map", "0:a",
+				"-map", "1:0",
+				"-c:a", "copy",
+				"-metadata:s:v", "title=Cover",
+				"-metadata:s:v", "comment=Front Cover",
+				"-disposition:v", "attached_pic",
+			)
+		} else {
+			args = append(args, "-c:a", "copy", "-c:v", "copy")
+		}
+		args = append(args, tmpOut)
 	}
 
 	cmd := exec.Command("ffmpeg", args...)
@@ -178,52 +252,6 @@ func WriteLyricsWithFFmpeg(filePath, lyrics string) error {
 	// 替换原文件
 	if err := os.Rename(tmpOut, filePath); err != nil {
 		os.Remove(tmpOut)
-		return fmt.Errorf("替换原文件失败: %w", err)
-	}
-
-	return nil
-}
-
-// WriteCoverWithFFmpeg 使用 ffmpeg 将封面图片嵌入到音频文件中
-func WriteCoverWithFFmpeg(filePath string, coverData []byte) error {
-	ext := strings.ToLower(filepath.Ext(filePath))
-
-	// 将封面写入临时文件
-	tmpImg, err := os.CreateTemp("", "cover-*.jpg")
-	if err != nil {
-		return fmt.Errorf("创建临时封面文件失败: %w", err)
-	}
-	defer os.Remove(tmpImg.Name())
-
-	if _, err := tmpImg.Write(coverData); err != nil {
-		tmpImg.Close()
-		return fmt.Errorf("写入临时封面文件失败: %w", err)
-	}
-	tmpImg.Close()
-
-	tmpOut := filePath + ".tmp" + ext
-
-	args := []string{
-		"-y",
-		"-i", filePath,
-		"-i", tmpImg.Name(),
-		"-map", "0:a",
-		"-map", "1:0",
-		"-c:a", "copy",
-		"-metadata:s:v", "title=Cover",
-		"-metadata:s:v", "comment=Front Cover",
-		"-disposition:v", "attached_pic",
-		tmpOut,
-	}
-
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		os.Remove(tmpOut)
-		return fmt.Errorf("ffmpeg 写入封面失败: %w", err)
-	}
-
-	if err := os.Rename(tmpOut, filePath); err != nil {
 		return fmt.Errorf("替换原文件失败: %w", err)
 	}
 

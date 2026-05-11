@@ -62,7 +62,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	// 创建 Meting API 客户端
-	client := meting.NewClient(apiBase, server, secretKey)
+	client := meting.NewClient(apiBase, server)
 
 	log.WithCtx(cmd.Context()).Infof("🎵 音乐元数据补全工具 - 目录: %s, 平台: %s, 歌词: %s, 封面: %s, 模式: %s",
 		dir, server, boolToStr(!skipLyrics), boolToStr(!skipCover), modeDisplay())
@@ -165,150 +165,158 @@ func processFile(filePath string, client *meting.Client, ctx context.Context) er
 		return nil
 	}
 
-	// 5. 获取并写入歌词
+	// 5. 获取歌词和封面数据
+	var lyrics string
+	var coverData []byte
+	var mimeType string
+
 	if !skipLyrics {
 		needLyrics := !mf.HasLyrics || forceUpdate
-		if needLyrics {
-			writeLyricsFromURL(filePath, client, bestMatch.Lrc, ctx)
+		if needLyrics && bestMatch.Lrc != "" {
+			log.WithCtx(ctx).Info("📝 获取歌词...")
+			l, err := client.GetLyricsFromURL(bestMatch.Lrc)
+			if err != nil {
+				log.WithCtx(ctx).Error(fmt.Sprintf("获取歌词失败: %v", err))
+			} else if strings.TrimSpace(l) == "" {
+				log.WithCtx(ctx).Warn("歌词为空")
+			} else {
+				lyrics = l
+			}
+		} else if needLyrics {
+			log.WithCtx(ctx).Warn("歌词 URL 为空")
 		} else {
 			log.WithCtx(ctx).Info("📝 歌词已存在，跳过")
 		}
 	}
 
-	// 6. 获取并写入封面
 	if !skipCover {
 		needCover := !mf.HasCover || forceUpdate
-		if needCover {
-			writeCoverFromURL(filePath, client, bestMatch.Pic, ctx)
+		if needCover && bestMatch.Pic != "" {
+			log.WithCtx(ctx).Info("🖼️  获取封面...")
+			data, mime, err := client.DownloadCoverFromURL(bestMatch.Pic)
+			if err != nil {
+				log.WithCtx(ctx).Error(fmt.Sprintf("获取封面失败: %v", err))
+			} else if len(data) == 0 {
+				log.WithCtx(ctx).Warn("封面数据为空")
+			} else {
+				coverData = data
+				mimeType = mime
+			}
+		} else if needCover {
+			log.WithCtx(ctx).Warn("封面 URL 为空")
 		} else {
 			log.WithCtx(ctx).Info("🖼️  封面已存在，跳过")
 		}
 	}
 
+	// 6. 同时写入歌词和封面（避免互相覆盖）
+	if lyrics != "" || len(coverData) > 0 {
+		writeMetadata(filePath, lyrics, coverData, mimeType, ctx)
+	}
+
 	return nil
 }
 
-// writeLyricsFromURL 从 URL 获取并写入歌词（URL 已包含正确的 auth token）
-func writeLyricsFromURL(filePath string, client *meting.Client, lrcURL string, ctx context.Context) {
-	log.WithCtx(ctx).Info("📝 获取歌词...")
-
-	if lrcURL == "" {
-		log.WithCtx(ctx).Warn("歌词 URL 为空")
-		return
-	}
-
-	lyrics, err := client.GetLyricsFromURL(lrcURL)
-	if err != nil {
-		log.WithCtx(ctx).Error(fmt.Sprintf("失败: %v", err))
-		return
-	}
-	if strings.TrimSpace(lyrics) == "" {
-		log.WithCtx(ctx).Warn("歌词为空")
-		return
-	}
-
+// writeMetadata 同时写入歌词和封面（避免互相覆盖）
+func writeMetadata(filePath, lyrics string, coverData []byte, mimeType string, ctx context.Context) {
 	if saveExternal {
-		if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
-			log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
-		} else {
-			log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件")
-		}
-		return
-	}
-
-	// MP3 格式可以直接嵌入歌词
-	if metadata.IsMP3(filePath) {
-		if err := metadata.WriteLyricsToMP3(filePath, lyrics); err != nil {
-			log.WithCtx(ctx).Error(fmt.Sprintf("写入失败: %v", err))
-		} else {
-			log.WithCtx(ctx).Info("✅ 已嵌入")
-		}
-		return
-	}
-
-	// 其他格式尝试使用 ffmpeg 嵌入
-	if metadata.SupportsEmbedding() {
-		if err := metadata.WriteLyricsWithFFmpeg(filePath, lyrics); err != nil {
-			log.WithCtx(ctx).Warn(fmt.Sprintf("ffmpeg 写入失败: %v，回退到 .lrc 文件", err))
+		// 保存为外部文件
+		if lyrics != "" {
 			if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件")
 			}
-		} else {
-			log.WithCtx(ctx).Info("✅ 已嵌入 (via ffmpeg)")
 		}
-		return
-	}
-
-	// ffmpeg 不可用，回退到 .lrc 文件
-	if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
-		log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
-	} else {
-		log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件（ffmpeg 不可用）")
-	}
-}
-
-// writeCoverFromURL 从 URL 获取并写入封面（URL 已包含正确的 auth token）
-func writeCoverFromURL(filePath string, client *meting.Client, picURL string, ctx context.Context) {
-	log.WithCtx(ctx).Info("🖼️  获取封面...")
-
-	if picURL == "" {
-		log.WithCtx(ctx).Warn("封面 URL 为空")
-		return
-	}
-
-	coverData, mimeType, err := client.DownloadCoverFromURL(picURL)
-	if err != nil {
-		log.WithCtx(ctx).Error(fmt.Sprintf("失败: %v", err))
-		return
-	}
-	if len(coverData) == 0 {
-		log.WithCtx(ctx).Warn("封面数据为空")
-		return
-	}
-
-	if mimeType == "" {
-		mimeType = "image/jpeg"
-	}
-
-	if saveExternal {
-		if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
-			log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
-		} else {
-			log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)", len(coverData)/1024))
-		}
-		return
-	}
-
-	if metadata.IsMP3(filePath) {
-		if err := metadata.WriteCoverToMP3(filePath, coverData, mimeType); err != nil {
-			log.WithCtx(ctx).Error(fmt.Sprintf("写入失败: %v", err))
-		} else {
-			log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已嵌入 (%d KB)", len(coverData)/1024))
-		}
-		return
-	}
-
-	if metadata.SupportsEmbedding() {
-		if err := metadata.WriteCoverWithFFmpeg(filePath, coverData); err != nil {
-			log.WithCtx(ctx).Warn(fmt.Sprintf("ffmpeg 写入失败: %v，回退到 .jpg 文件", err))
+		if len(coverData) > 0 {
 			if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)", len(coverData)/1024))
 			}
-		} else {
-			log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已嵌入 (via ffmpeg, %d KB)", len(coverData)/1024))
 		}
 		return
 	}
 
-	// ffmpeg 不可用，回退到 .jpg 文件
-	if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
-		log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
-	} else {
-		log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB, ffmpeg 不可用)", len(coverData)/1024))
+	// MP3 格式使用 id3v2 库
+	if metadata.IsMP3(filePath) {
+		var err error
+		if lyrics != "" && len(coverData) > 0 {
+			err = metadata.WriteAllToMP3(filePath, "", "", "", lyrics, coverData, mimeType)
+		} else if lyrics != "" {
+			err = metadata.WriteLyricsToMP3(filePath, lyrics)
+		} else if len(coverData) > 0 {
+			err = metadata.WriteCoverToMP3(filePath, coverData, mimeType)
+		}
+
+		if err != nil {
+			log.WithCtx(ctx).Error(fmt.Sprintf("写入失败: %v", err))
+		} else {
+			if lyrics != "" && len(coverData) > 0 {
+				log.WithCtx(ctx).Info("✅ 已嵌入歌词和封面")
+			} else if lyrics != "" {
+				log.WithCtx(ctx).Info("✅ 已嵌入歌词")
+			} else {
+				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已嵌入封面 (%d KB)", len(coverData)/1024))
+			}
+		}
+		return
+	}
+
+	// 其他格式使用 ffmpeg
+	if metadata.SupportsEmbedding() {
+		var err error
+		if lyrics != "" && len(coverData) > 0 {
+			err = metadata.WriteLyricsAndCoverWithFFmpeg(filePath, lyrics, coverData, mimeType)
+		} else if lyrics != "" {
+			err = metadata.WriteLyricsWithFFmpeg(filePath, lyrics)
+		} else if len(coverData) > 0 {
+			err = metadata.WriteCoverWithFFmpeg(filePath, coverData)
+		}
+
+		if err != nil {
+			log.WithCtx(ctx).Warn(fmt.Sprintf("ffmpeg 写入失败: %v，回退到外部文件", err))
+			// 回退到外部文件
+			if lyrics != "" {
+				if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
+					log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
+				} else {
+					log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件")
+				}
+			}
+			if len(coverData) > 0 {
+				if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
+					log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
+				} else {
+					log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)", len(coverData)/1024))
+				}
+			}
+		} else {
+			if lyrics != "" && len(coverData) > 0 {
+				log.WithCtx(ctx).Info("✅ 已嵌入歌词和封面 (via ffmpeg)")
+			} else if lyrics != "" {
+				log.WithCtx(ctx).Info("✅ 已嵌入歌词 (via ffmpeg)")
+			} else {
+				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已嵌入封面 (via ffmpeg, %d KB)", len(coverData)/1024))
+			}
+		}
+		return
+	}
+
+	// ffmpeg 不可用，回退到外部文件
+	if lyrics != "" {
+		if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
+			log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
+		} else {
+			log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件（ffmpeg 不可用）")
+		}
+	}
+	if len(coverData) > 0 {
+		if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
+			log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
+		} else {
+			log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB, ffmpeg 不可用)", len(coverData)/1024))
+		}
 	}
 }
 

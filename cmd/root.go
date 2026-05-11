@@ -11,7 +11,6 @@ var (
 	// 全局标志
 	apiBase     string
 	server      string
-	secretKey   string
 	dryRun      bool
 	forceUpdate bool
 )
@@ -58,7 +57,6 @@ func init() {
 	// 全局标志
 	rootCmd.PersistentFlags().StringVar(&apiBase, "api", "https://api.i-meto.com/meting/api", "Meting API 地址")
 	rootCmd.PersistentFlags().StringVarP(&server, "server", "s", "netease", "音乐平台 (netease/tencent/kugou/baidu/kuwo)")
-	rootCmd.PersistentFlags().StringVar(&secretKey, "token", "token", "HMAC 签名密钥")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "仅显示信息，不修改文件")
 	rootCmd.PersistentFlags().BoolVarP(&forceUpdate, "force", "f", false, "强制更新已有元数据")
 }
