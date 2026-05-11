@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -18,6 +20,7 @@ var (
 	skipLyrics   bool
 	skipCover    bool
 	saveExternal bool
+	workers      int
 )
 
 var scanCmd = &cobra.Command{
@@ -31,7 +34,8 @@ var scanCmd = &cobra.Command{
 		"  music_metadata scan ./music -p netease\n"+
 		"  music_metadata scan ./music --dry-run\n"+
 		"  music_metadata scan ./music --external\n"+
-		"  music_metadata scan ./music --no-lyrics --force\n",
+		"  music_metadata scan ./music --no-lyrics --force\n"+
+		"  music_metadata scan ./music -w 5\n",
 		ColorBold, ColorReset,
 		ColorCyan, ColorReset,
 	),
@@ -43,6 +47,7 @@ func init() {
 	scanCmd.Flags().BoolVar(&skipLyrics, "no-lyrics", false, "不获取歌词")
 	scanCmd.Flags().BoolVar(&skipCover, "no-cover", false, "不获取封面")
 	scanCmd.Flags().BoolVar(&saveExternal, "external", false, "保存为独立的 .lrc/.jpg 文件（不嵌入音频文件）")
+	scanCmd.Flags().IntVarP(&workers, "workers", "w", 10, "并发处理数")
 	rootCmd.AddCommand(scanCmd)
 }
 
@@ -84,13 +89,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	log.WithCtx(cmd.Context()).Info(fmt.Sprintf("找到 %d 个音乐文件", len(files)))
 
-	// 统计
-	stats := struct {
-		total   int
-		success int
-		failed  int
-		skipped int
-	}{total: len(files)}
+	// 统计（使用原子操作保证并发安全）
+	var successCount int32
+	var failedCount int32
 
 	// 创建进度条，期间将日志级别设为 error，避免日志干扰进度条显示
 	log.SetLogLevel("error")
@@ -101,30 +102,43 @@ func runScan(cmd *cobra.Command, args []string) error {
 		log.WithCtx(cmd.Context()).Error(fmt.Sprintf("创建进度条失败: %v", err))
 	}
 
-	// 处理每个文件
+	// 使用 semaphore 控制并发数
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+
 	for _, filePath := range files {
-		relPath, _ := filepath.Rel(dir, filePath)
-		if progressBar != nil {
-			progressBar.UpdateTitle(relPath)
-		}
+		wg.Add(1)
+		sem <- struct{}{} // 获取信号量
 
-		if err := processFile(filePath, p, cmd.Context()); err != nil {
-			stats.failed++
-		} else {
-			stats.success++
-		}
+		go func(fp string) {
+			defer wg.Done()
+			defer func() { <-sem }() // 释放信号量
 
-		if progressBar != nil {
-			progressBar.Increment()
-		}
+			relPath, _ := filepath.Rel(dir, fp)
+
+			if err := processFile(fp, p, cmd.Context()); err != nil {
+				atomic.AddInt32(&failedCount, 1)
+				_ = relPath // 并发模式下不打印错误日志，避免干扰进度条
+			} else {
+				atomic.AddInt32(&successCount, 1)
+			}
+
+			if progressBar != nil {
+				progressBar.UpdateTitle(relPath)
+				progressBar.Increment()
+			}
+		}(filePath)
 	}
+
+	// 等待所有任务完成
+	wg.Wait()
 
 	// 恢复日志级别
 	log.SetLogLevel("info")
 
 	// 打印汇总
 	pterm.Info.Printfln("📊 处理完成 - 总计: %d, 成功: %d, 失败: %d",
-		stats.total, stats.success, stats.failed)
+		len(files), successCount, failedCount)
 
 	return nil
 }

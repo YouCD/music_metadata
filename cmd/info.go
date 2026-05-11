@@ -5,6 +5,7 @@ import (
 	"music_metadata/metadata"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
@@ -95,23 +96,29 @@ func runInfo(cmd *cobra.Command, args []string) error {
 
 	// 填充数据
 	for i, filePath := range files {
+		relPath, _ := filepath.Rel(baseDir, filePath)
+		ext := strings.ToLower(filepath.Ext(filePath))
+		formatStr := strings.TrimPrefix(ext, ".")
+
 		mf, err := metadata.ReadMusicFile(filePath)
 		if err != nil {
-			relPath, _ := filepath.Rel(baseDir, filePath)
+			// 读取元数据失败时，仍然显示文件名和格式
 			row := []string{
 				fmt.Sprintf("%d", i+1),
 				relPath,
-				fmt.Sprintf("读取失败: %v", err),
+				"-",
+				"-",
+				"-",
+				formatStr,
+				"❌",
+				"❌",
 			}
-			// 补齐列数
-			for len(row) < len(headers) {
-				row = append(row, "")
+			if showAll {
+				row = append(row, "-", "-", "-")
 			}
 			table.Append(row)
 			continue
 		}
-
-		relPath, _ := filepath.Rel(baseDir, filePath)
 
 		lyricsIcon := "❌"
 		if mf.HasLyrics {
