@@ -135,48 +135,26 @@ func WriteAllToMP3(filePath, title, artist, album, lyrics string, coverData []by
 // 对于 FLAC 文件，歌词写入 LYRICS 标签；对于其他格式，尝试写入 COMMENT 或对应标签
 func WriteLyricsWithFFmpeg(filePath, lyrics string) error {
 	ext := strings.ToLower(filepath.Ext(filePath))
-
-	// 将歌词写入临时文件
-	tmpLrc, err := os.CreateTemp("", "lyrics-*.lrc")
-	if err != nil {
-		return fmt.Errorf("创建临时歌词文件失败: %w", err)
-	}
-	defer os.Remove(tmpLrc.Name())
-
-	if _, err := tmpLrc.WriteString(lyrics); err != nil {
-		tmpLrc.Close()
-		return fmt.Errorf("写入临时歌词文件失败: %w", err)
-	}
-	tmpLrc.Close()
-
-	// 构建 ffmpeg 命令
-	// 对于 FLAC：使用 -metadata LYRICS=...
-	// 通用方式：使用 -i tmp.lrc 嵌入歌词流
 	tmpOut := filePath + ".tmp" + ext
 
 	var args []string
 	switch ext {
 	case ".flac":
+		// FLAC 格式：直接使用 -metadata 写入 LYRICS 字段
 		args = []string{
 			"-y", "-i", filePath,
-			"-i", tmpLrc.Name(),
-			"-map_metadata", "0",
-			"-map", "0:a",
-			"-map", "1:0",
-			"-metadata:s:s:0", "mimetype=application/x-srt",
-			"-metadata:s:s:0", "language=eng",
+			"-metadata", fmt.Sprintf("LYRICS=%s", lyrics),
 			"-c:a", "copy",
+			"-c:v", "copy",
 			tmpOut,
 		}
 	case ".m4a", ".aac":
+		// M4A/AAC 格式：使用 sonilyrics 或 desc 字段
 		args = []string{
 			"-y", "-i", filePath,
-			"-i", tmpLrc.Name(),
-			"-map_metadata", "0",
-			"-map", "0:a",
-			"-map", "1:0",
-			"-metadata:s:s:0", "handler_name=Lyrics",
+			"-metadata", fmt.Sprintf("lyrics-eng=%s", lyrics),
 			"-c:a", "copy",
+			"-c:v", "copy",
 			tmpOut,
 		}
 	default:
@@ -185,6 +163,7 @@ func WriteLyricsWithFFmpeg(filePath, lyrics string) error {
 			"-y", "-i", filePath,
 			"-metadata", fmt.Sprintf("LYRICS=%s", lyrics),
 			"-c:a", "copy",
+			"-c:v", "copy",
 			tmpOut,
 		}
 	}
@@ -198,6 +177,7 @@ func WriteLyricsWithFFmpeg(filePath, lyrics string) error {
 
 	// 替换原文件
 	if err := os.Rename(tmpOut, filePath); err != nil {
+		os.Remove(tmpOut)
 		return fmt.Errorf("替换原文件失败: %w", err)
 	}
 

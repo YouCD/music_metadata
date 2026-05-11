@@ -33,10 +33,12 @@ var rootCmd = &cobra.Command{
 		"通过 Meting API 自动抓取并补全音乐文件的歌词、封面等元数据。\n"+
 		"支持 MP3、FLAC、M4A、OGG、WAV、APE、AIFF 等格式。\n\n"+
 		"%s支持的音乐平台:%s netease / tencent / kugou / baidu / kuwo\n"+
-		"%sAPI 地址:%s https://api.i-meto.com/meting\n",
+		"%sAPI 地址:%s https://api.i-meto.com/meting/api (公共服务器可能已不可用)\n"+
+		"%s提示:%s 如遇到 401 错误，请自建 Meting API 服务并使用 --api 参数指定\n",
 		ColorBold, ColorReset,
 		ColorCyan, ColorReset,
 		ColorCyan, ColorReset,
+		ColorYellow, ColorReset,
 	),
 	SilenceUsage:  true,
 	SilenceErrors: true,

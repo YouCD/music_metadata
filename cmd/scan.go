@@ -183,7 +183,7 @@ func processFile(filePath string, client *meting.Client) error {
 	if !skipLyrics {
 		needLyrics := !mf.HasLyrics || forceUpdate
 		if needLyrics {
-			writeLyrics(filePath, client, bestMatch.SongID)
+			writeLyricsFromURL(filePath, client, bestMatch.Lrc)
 		} else {
 			fmt.Printf("  📝 歌词已存在，跳过\n")
 		}
@@ -193,7 +193,7 @@ func processFile(filePath string, client *meting.Client) error {
 	if !skipCover {
 		needCover := !mf.HasCover || forceUpdate
 		if needCover {
-			writeCover(filePath, client, bestMatch.SongID)
+			writeCoverFromURL(filePath, client, bestMatch.Pic)
 		} else {
 			fmt.Printf("  🖼️  封面已存在，跳过\n")
 		}
@@ -202,10 +202,16 @@ func processFile(filePath string, client *meting.Client) error {
 	return nil
 }
 
-// writeLyrics 获取并写入歌词
-func writeLyrics(filePath string, client *meting.Client, songID string) {
+// writeLyricsFromURL 从 URL 获取并写入歌词（URL 已包含正确的 auth token）
+func writeLyricsFromURL(filePath string, client *meting.Client, lrcURL string) {
 	fmt.Printf("  📝 获取歌词...")
-	lyrics, err := client.GetLyrics(songID)
+
+	if lrcURL == "" {
+		fmt.Printf(" %s歌词 URL 为空%s\n", ColorYellow, ColorReset)
+		return
+	}
+
+	lyrics, err := client.GetLyricsFromURL(lrcURL)
 	if err != nil {
 		fmt.Printf(" %s失败: %v%s\n", ColorRed, err, ColorReset)
 		return
@@ -224,6 +230,7 @@ func writeLyrics(filePath string, client *meting.Client, songID string) {
 		return
 	}
 
+	// MP3 格式可以直接嵌入歌词
 	if metadata.IsMP3(filePath) {
 		if err := metadata.WriteLyricsToMP3(filePath, lyrics); err != nil {
 			fmt.Printf(" %s写入失败: %v%s\n", ColorRed, err, ColorReset)
@@ -233,6 +240,7 @@ func writeLyrics(filePath string, client *meting.Client, songID string) {
 		return
 	}
 
+	// 其他格式尝试使用 ffmpeg 嵌入
 	if metadata.SupportsEmbedding() {
 		if err := metadata.WriteLyricsWithFFmpeg(filePath, lyrics); err != nil {
 			fmt.Printf(" %sffmpeg 写入失败: %v，回退到 .lrc 文件%s\n", ColorYellow, err, ColorReset)
@@ -255,10 +263,16 @@ func writeLyrics(filePath string, client *meting.Client, songID string) {
 	}
 }
 
-// writeCover 获取并写入封面
-func writeCover(filePath string, client *meting.Client, songID string) {
+// writeCoverFromURL 从 URL 获取并写入封面（URL 已包含正确的 auth token）
+func writeCoverFromURL(filePath string, client *meting.Client, picURL string) {
 	fmt.Printf("  🖼️  获取封面...")
-	coverData, mimeType, err := client.DownloadCover(songID)
+
+	if picURL == "" {
+		fmt.Printf(" %s封面 URL 为空%s\n", ColorYellow, ColorReset)
+		return
+	}
+
+	coverData, mimeType, err := client.DownloadCoverFromURL(picURL)
 	if err != nil {
 		fmt.Printf(" %s失败: %v%s\n", ColorRed, err, ColorReset)
 		return
