@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
 	"github.com/youcd/toolkit/log"
 )
@@ -30,7 +32,7 @@ var infoCmd = &cobra.Command{
 var showAll bool
 
 func init() {
-	infoCmd.Flags().BoolVarP(&showAll, "all", "a", false, "显示详细信息")
+	infoCmd.Flags().BoolVarP(&showAll, "all", "a", false, "显示详细信息（年份、流派、音轨）")
 	rootCmd.AddCommand(infoCmd)
 }
 
@@ -40,16 +42,25 @@ func runInfo(cmd *cobra.Command, args []string) error {
 		path = args[0]
 	}
 
-	// 检查路径是否存在
-	stat, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return fmt.Errorf("路径不存在: %s", path)
+	// 将路径转为绝对路径
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("无法解析路径: %w", err)
 	}
 
+	// 检查路径是否存在
+	stat, err := os.Stat(absPath)
+	if os.IsNotExist(err) {
+		return fmt.Errorf("路径不存在: %s", absPath)
+	}
+
+	// 确定相对路径的基准目录
+	var baseDir string
 	var files []string
 	if stat.IsDir() {
+		baseDir = absPath
 		// 扫描目录
-		files, err = metadata.FindMusicFiles(path)
+		files, err = metadata.FindMusicFiles(absPath)
 		if err != nil {
 			return fmt.Errorf("扫描目录失败: %w", err)
 		}
@@ -59,37 +70,87 @@ func runInfo(cmd *cobra.Command, args []string) error {
 		}
 		log.WithCtx(cmd.Context()).Info(fmt.Sprintf("找到 %d 个音乐文件", len(files)))
 	} else {
+		baseDir = filepath.Dir(absPath)
 		// 单个文件
-		if !metadata.IsSupported(path) {
-			return fmt.Errorf("不支持的文件格式: %s", filepath.Ext(path))
+		if !metadata.IsSupported(absPath) {
+			return fmt.Errorf("不支持的文件格式: %s", filepath.Ext(absPath))
 		}
-		files = []string{path}
+		files = []string{absPath}
 	}
 
+	// 构建表头
+	headers := []string{"#", "文件", "标题", "歌手", "专辑", "格式", "歌词", "封面"}
+	if showAll {
+		headers = append(headers, "年份", "流派", "音轨")
+	}
+
+	// 创建表格
+	table := tablewriter.NewTable(os.Stdout,
+		tablewriter.WithHeaderAlignment(tw.AlignLeft),
+		tablewriter.WithRowAlignment(tw.AlignLeft),
+		tablewriter.WithHeaderAutoWrap(tw.WrapNone),
+		tablewriter.WithRowAutoWrap(tw.WrapNone),
+	)
+	table.Header(headers)
+
+	// 填充数据
 	for i, filePath := range files {
 		mf, err := metadata.ReadMusicFile(filePath)
 		if err != nil {
-			log.WithCtx(cmd.Context()).Error(fmt.Sprintf("[%d] %s - 读取失败: %v", i+1, filePath, err))
+			relPath, _ := filepath.Rel(baseDir, filePath)
+			row := []string{
+				fmt.Sprintf("%d", i+1),
+				relPath,
+				fmt.Sprintf("读取失败: %v", err),
+			}
+			// 补齐列数
+			for len(row) < len(headers) {
+				row = append(row, "")
+			}
+			table.Append(row)
 			continue
 		}
 
-		relPath, _ := filepath.Rel(".", filePath)
-		log.WithCtx(cmd.Context()).Infof("[%d] %s - 标题: %s, 歌手: %s, 专辑: %s, 格式: %s, 有歌词: %v, 有封面: %v",
-			i+1, relPath, mf.Title, mf.Artist, mf.Album, mf.Format, mf.HasLyrics, mf.HasCover)
+		relPath, _ := filepath.Rel(baseDir, filePath)
 
-		if showAll || mf.Year != "" {
-			log.WithCtx(cmd.Context()).Debug(fmt.Sprintf("    年份: %s", displayValue(mf.Year)))
+		lyricsIcon := "❌"
+		if mf.HasLyrics {
+			lyricsIcon = "✅"
 		}
-		if showAll || mf.Genre != "" {
-			log.WithCtx(cmd.Context()).Debug(fmt.Sprintf("    流派: %s", displayValue(mf.Genre)))
+		coverIcon := "❌"
+		if mf.HasCover {
+			coverIcon = "✅"
 		}
-		if showAll || mf.Track != 0 {
+
+		row := []string{
+			fmt.Sprintf("%d", i+1),
+			relPath,
+			displayValue(mf.Title),
+			displayValue(mf.Artist),
+			displayValue(mf.Album),
+			string(mf.Format),
+			lyricsIcon,
+			coverIcon,
+		}
+
+		if showAll {
 			track := ""
 			if mf.Track != 0 {
 				track = fmt.Sprintf("%d", mf.Track)
 			}
-			log.WithCtx(cmd.Context()).Debug(fmt.Sprintf("    音轨: %s", displayValue(track)))
+			row = append(row,
+				displayValue(mf.Year),
+				displayValue(mf.Genre),
+				displayValue(track),
+			)
 		}
+
+		table.Append(row)
+	}
+
+	// 渲染表格
+	if err := table.Render(); err != nil {
+		return fmt.Errorf("渲染表格失败: %w", err)
 	}
 
 	return nil
@@ -97,7 +158,7 @@ func runInfo(cmd *cobra.Command, args []string) error {
 
 func displayValue(s string) string {
 	if s == "" {
-		return "(无)"
+		return "-"
 	}
 	return s
 }

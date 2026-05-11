@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"github.com/youcd/toolkit/log"
 )
@@ -88,23 +89,41 @@ func runScan(cmd *cobra.Command, args []string) error {
 		total   int
 		success int
 		failed  int
+		skipped int
 	}{total: len(files)}
 
+	// 创建进度条，期间将日志级别设为 error，避免日志干扰进度条显示
+	log.SetLogLevel("error")
+
+	progressBar, err := pterm.DefaultProgressbar.WithTotal(len(files)).WithTitle("处理音乐文件").Start()
+	if err != nil {
+		log.SetLogLevel("info")
+		log.WithCtx(cmd.Context()).Error(fmt.Sprintf("创建进度条失败: %v", err))
+	}
+
 	// 处理每个文件
-	for i, filePath := range files {
+	for _, filePath := range files {
 		relPath, _ := filepath.Rel(dir, filePath)
-		log.WithCtx(cmd.Context()).Info(fmt.Sprintf("[%d/%d] 处理: %s", i+1, stats.total, relPath))
+		if progressBar != nil {
+			progressBar.UpdateTitle(relPath)
+		}
 
 		if err := processFile(filePath, p, cmd.Context()); err != nil {
-			log.WithCtx(cmd.Context()).Error(fmt.Sprintf("❌ 失败: %v", err))
 			stats.failed++
 		} else {
 			stats.success++
 		}
+
+		if progressBar != nil {
+			progressBar.Increment()
+		}
 	}
 
+	// 恢复日志级别
+	log.SetLogLevel("info")
+
 	// 打印汇总
-	log.WithCtx(cmd.Context()).Infof("📊 处理完成 - 总计: %d, 成功: %d, 失败: %d",
+	pterm.Info.Printfln("📊 处理完成 - 总计: %d, 成功: %d, 失败: %d",
 		stats.total, stats.success, stats.failed)
 
 	return nil
@@ -119,16 +138,14 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 		mf = guessFromFilename(filePath)
 	}
 
-	// 如果标题为空，尝试从文件名推断
+	// 从文件名推断信息，用于补充缺失的元数据和优化搜索
+	guessed := guessFromFilename(filePath)
+
+	// 如果标题为空，使用文件名推断的标题
 	if mf.Title == "" {
-		guessed := guessFromFilename(filePath)
 		if guessed.Title != "" {
 			mf.Title = guessed.Title
-			// 如果原来没有歌手信息，也尝试从文件名获取
-			if mf.Artist == "" && guessed.Artist != "" {
-				mf.Artist = guessed.Artist
-			}
-			log.WithCtx(ctx).Info(fmt.Sprintf("💡 从文件名推断: %s - %s", mf.Artist, mf.Title))
+			log.WithCtx(ctx).Info(fmt.Sprintf("💡 从文件名推断标题: %s", mf.Title))
 		} else {
 			// 如果无法从文件名推断，使用不带扩展名的文件名作为标题
 			name := filepath.Base(filePath)
@@ -136,6 +153,12 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 			mf.Title = name
 			log.WithCtx(ctx).Info(fmt.Sprintf("💡 使用文件名作为标题: %s", mf.Title))
 		}
+	}
+
+	// 如果歌手为空，使用文件名推断的歌手
+	if mf.Artist == "" && guessed.Artist != "" {
+		mf.Artist = guessed.Artist
+		log.WithCtx(ctx).Info(fmt.Sprintf("💡 从文件名推断歌手: %s", mf.Artist))
 	}
 
 	log.WithCtx(ctx).Infof("文件信息 - 标题: %s, 歌手: %s, 专辑: %s, 有歌词: %v, 有封面: %v",
@@ -148,7 +171,12 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 	}
 
 	// 2. 构建搜索关键词
-	keyword := buildSearchKeyword(mf.Title, mf.Artist)
+	// 优先使用文件名中推断的歌手信息，因为文件名通常更准确
+	searchArtist := mf.Artist
+	if guessed.Artist != "" {
+		searchArtist = guessed.Artist
+	}
+	keyword := buildSearchKeyword(mf.Title, searchArtist)
 	log.WithCtx(ctx).Info(fmt.Sprintf("🔍 搜索: \"%s\"", keyword))
 
 	// 3. 搜索歌曲
@@ -161,8 +189,8 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 		return fmt.Errorf("未找到匹配的歌曲")
 	}
 
-	// 4. 选择最佳匹配
-	bestMatch := findBestMatch(songs, mf.Title, mf.Artist)
+	// 4. 选择最佳匹配（使用文件名推断的歌手信息进行匹配）
+	bestMatch := findBestMatch(songs, mf.Title, searchArtist)
 	log.WithCtx(ctx).Info(fmt.Sprintf("✅ 匹配: %s - %s (ID: %s)", bestMatch.Artist, bestMatch.Title, bestMatch.SongID))
 
 	if bestMatch.SongID == "" {
@@ -214,16 +242,16 @@ func processFile(filePath string, p provider.Provider, ctx context.Context) erro
 		}
 	}
 
-	// 6. 同时写入元数据（artist、album、date、歌词、封面）
-	if lyrics != "" || len(coverData) > 0 || bestMatch.Artist != "" || bestMatch.Album != "" || bestMatch.Date != "" {
-		writeMetadata(filePath, bestMatch.Artist, bestMatch.Album, bestMatch.Date, lyrics, coverData, mimeType, ctx)
+	// 6. 同时写入元数据（title、artist、album、date、歌词、封面）
+	if bestMatch.Title != "" || lyrics != "" || len(coverData) > 0 || bestMatch.Artist != "" || bestMatch.Album != "" || bestMatch.Date != "" {
+		writeMetadata(filePath, bestMatch.Title, bestMatch.Artist, bestMatch.Album, bestMatch.Date, lyrics, coverData, mimeType, ctx)
 	}
 
 	return nil
 }
 
-// writeMetadata 同时写入元数据（artist、album、date、歌词、封面）
-func writeMetadata(filePath, artist, album, date, lyrics string, coverData []byte, mimeType string, ctx context.Context) {
+// writeMetadata 同时写入元数据（title、artist、album、date、歌词、封面）
+func writeMetadata(filePath, title, artist, album, date, lyrics string, coverData []byte, mimeType string, ctx context.Context) {
 	if saveExternal {
 		// 保存为外部文件
 		if lyrics != "" {
@@ -246,21 +274,21 @@ func writeMetadata(filePath, artist, album, date, lyrics string, coverData []byt
 	// MP3 格式使用 id3v2 库
 	if metadata.IsMP3(filePath) {
 		var err error
-		if lyrics != "" || len(coverData) > 0 || artist != "" || album != "" || date != "" {
-			err = metadata.WriteAllToMP3(filePath, "", artist, album, date, lyrics, coverData, mimeType)
+		if title != "" || lyrics != "" || len(coverData) > 0 || artist != "" || album != "" || date != "" {
+			err = metadata.WriteAllToMP3(filePath, title, artist, album, date, lyrics, coverData, mimeType)
 		}
 
 		if err != nil {
 			log.WithCtx(ctx).Error(fmt.Sprintf("写入失败: %v", err))
 		} else {
-			log.WithCtx(ctx).Info("✅ 已嵌入元数据（歌手/专辑/歌词/封面）")
+			log.WithCtx(ctx).Info("✅ 已嵌入元数据（标题/歌手/专辑/歌词/封面）")
 		}
 		return
 	}
 
 	// 其他格式使用 ffmpeg
 	if metadata.SupportsEmbedding() {
-		err := metadata.WriteAllWithFFmpeg(filePath, artist, album, date, lyrics, coverData, mimeType)
+		err := metadata.WriteAllWithFFmpeg(filePath, title, artist, album, date, lyrics, coverData, mimeType)
 
 		if err != nil {
 			log.WithCtx(ctx).Warn(fmt.Sprintf("ffmpeg 写入失败: %v，回退到外部文件", err))
@@ -280,7 +308,7 @@ func writeMetadata(filePath, artist, album, date, lyrics string, coverData []byt
 				}
 			}
 		} else {
-			log.WithCtx(ctx).Info("✅ 已嵌入元数据（歌手/专辑/日期/歌词/封面 via ffmpeg）")
+			log.WithCtx(ctx).Info("✅ 已嵌入元数据（标题/歌手/专辑/日期/歌词/封面 via ffmpeg）")
 		}
 		return
 	}
@@ -338,9 +366,10 @@ func guessFromFilename(filePath string) *metadata.MusicFile {
 }
 
 // buildSearchKeyword 构建搜索关键词
+// 格式: "歌手+歌曲名"，如 "许嵩+放飞"
 func buildSearchKeyword(title, artist string) string {
 	if title != "" && artist != "" {
-		return fmt.Sprintf("%s %s", artist, title)
+		return fmt.Sprintf("%s+%s", artist, title)
 	}
 	if title != "" {
 		return title

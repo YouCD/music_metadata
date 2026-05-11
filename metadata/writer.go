@@ -137,26 +137,26 @@ func WriteAllToMP3(filePath, title, artist, album, date, lyrics string, coverDat
 // WriteLyricsWithFFmpeg 使用 ffmpeg 将歌词嵌入到音频文件中（支持 FLAC、M4A、OGG 等）
 // 对于 FLAC 文件，歌词写入 LYRICS 标签；对于其他格式，尝试写入 COMMENT 或对应标签
 func WriteLyricsWithFFmpeg(filePath, lyrics string) error {
-	return writeMetadataWithFFmpeg(filePath, "", "", "", lyrics, nil, "")
+	return writeMetadataWithFFmpeg(filePath, "", "", "", "", lyrics, nil, "")
 }
 
 // WriteCoverWithFFmpeg 使用 ffmpeg 将封面图片嵌入到音频文件中
 func WriteCoverWithFFmpeg(filePath string, coverData []byte) error {
-	return writeMetadataWithFFmpeg(filePath, "", "", "", "", coverData, "")
+	return writeMetadataWithFFmpeg(filePath, "", "", "", "", "", coverData, "")
 }
 
 // WriteLyricsAndCoverWithFFmpeg 同时写入歌词和封面（避免多次重写文件）
 func WriteLyricsAndCoverWithFFmpeg(filePath, lyrics string, coverData []byte, mimeType string) error {
-	return writeMetadataWithFFmpeg(filePath, "", "", "", lyrics, coverData, mimeType)
+	return writeMetadataWithFFmpeg(filePath, "", "", "", "", lyrics, coverData, mimeType)
 }
 
-// WriteAllWithFFmpeg 使用 ffmpeg 一次性写入所有元数据（artist、album、date、歌词、封面）
-func WriteAllWithFFmpeg(filePath, artist, album, date, lyrics string, coverData []byte, mimeType string) error {
-	return writeMetadataWithFFmpeg(filePath, artist, album, date, lyrics, coverData, mimeType)
+// WriteAllWithFFmpeg 使用 ffmpeg 一次性写入所有元数据（title、artist、album、date、歌词、封面）
+func WriteAllWithFFmpeg(filePath, title, artist, album, date, lyrics string, coverData []byte, mimeType string) error {
+	return writeMetadataWithFFmpeg(filePath, title, artist, album, date, lyrics, coverData, mimeType)
 }
 
-// writeMetadataWithFFmpeg 内部函数：同时写入元数据（artist、album、date、歌词和/或封面）
-func writeMetadataWithFFmpeg(filePath, artist, album, date, lyrics string, coverData []byte, mimeType string) error {
+// writeMetadataWithFFmpeg 内部函数：同时写入元数据（title、artist、album、date、歌词和/或封面）
+func writeMetadataWithFFmpeg(filePath, title, artist, album, date, lyrics string, coverData []byte, mimeType string) error {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	tmpOut := filePath + ".tmp" + ext
 
@@ -185,6 +185,9 @@ func writeMetadataWithFFmpeg(filePath, artist, album, date, lyrics string, cover
 		args = append(args, "-y", "-i", filePath)
 		if tmpImg != nil {
 			args = append(args, "-i", tmpImg.Name())
+		}
+		if title != "" {
+			args = append(args, "-metadata", fmt.Sprintf("title=%s", title))
 		}
 		if artist != "" {
 			args = append(args, "-metadata", fmt.Sprintf("artist=%s", artist))
@@ -218,6 +221,9 @@ func writeMetadataWithFFmpeg(filePath, artist, album, date, lyrics string, cover
 		if tmpImg != nil {
 			args = append(args, "-i", tmpImg.Name())
 		}
+		if title != "" {
+			args = append(args, "-metadata", fmt.Sprintf("\xa9nam=%s", title))
+		}
 		if artist != "" {
 			args = append(args, "-metadata", fmt.Sprintf("\xa9ART=%s", artist))
 		}
@@ -249,6 +255,9 @@ func writeMetadataWithFFmpeg(filePath, artist, album, date, lyrics string, cover
 		args = append(args, "-y", "-i", filePath)
 		if tmpImg != nil {
 			args = append(args, "-i", tmpImg.Name())
+		}
+		if title != "" {
+			args = append(args, "-metadata", fmt.Sprintf("title=%s", title))
 		}
 		if artist != "" {
 			args = append(args, "-metadata", fmt.Sprintf("artist=%s", artist))
