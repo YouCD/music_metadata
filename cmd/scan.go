@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"music_metadata/metadata"
 	"music_metadata/meting"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/youcd/toolkit/log"
 )
 
 var (
@@ -56,21 +58,14 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	// 检查 ffmpeg 是否可用（非 external 模式时）
 	if !saveExternal && !metadata.SupportsEmbedding() {
-		fmt.Fprintf(os.Stderr, "%s警告: 未找到 ffmpeg，无法嵌入元数据到非 MP3 文件。%s\n", ColorYellow, ColorReset)
-		fmt.Fprintf(os.Stderr, "%s建议安装 ffmpeg 或使用 --external 选项保存为独立文件。%s\n\n", ColorYellow, ColorReset)
+		log.WithCtx(cmd.Context()).Warn("未找到 ffmpeg，无法嵌入元数据到非 MP3 文件。建议安装 ffmpeg 或使用 --external 选项保存为独立文件")
 	}
 
 	// 创建 Meting API 客户端
 	client := meting.NewClient(apiBase, server, secretKey)
 
-	fmt.Printf("%s🎵 音乐元数据补全工具%s\n", ColorBold, ColorReset)
-	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	fmt.Printf("  📁 目录:     %s\n", dir)
-	fmt.Printf("  🎶 平台:     %s\n", server)
-	fmt.Printf("  📝 歌词:     %s\n", boolToStr(!skipLyrics))
-	fmt.Printf("  🖼️  封面:     %s\n", boolToStr(!skipCover))
-	fmt.Printf("  🔧 模式:     %s\n", modeDisplay())
-	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+	log.WithCtx(cmd.Context()).Infof("🎵 音乐元数据补全工具 - 目录: %s, 平台: %s, 歌词: %s, 封面: %s, 模式: %s",
+		dir, server, boolToStr(!skipLyrics), boolToStr(!skipCover), modeDisplay())
 
 	// 查找所有音乐文件
 	files, err := metadata.FindMusicFiles(dir)
@@ -79,11 +74,11 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(files) == 0 {
-		fmt.Printf("%s⚠️  未找到支持的音乐文件%s\n", ColorYellow, ColorReset)
+		log.WithCtx(cmd.Context()).Warn("⚠️  未找到支持的音乐文件")
 		return nil
 	}
 
-	fmt.Printf("找到 %d 个音乐文件\n\n", len(files))
+	log.WithCtx(cmd.Context()).Info(fmt.Sprintf("找到 %d 个音乐文件", len(files)))
 
 	// 统计
 	stats := struct {
@@ -95,36 +90,29 @@ func runScan(cmd *cobra.Command, args []string) error {
 	// 处理每个文件
 	for i, filePath := range files {
 		relPath, _ := filepath.Rel(dir, filePath)
-		fmt.Printf("[%d/%d] %s处理: %s%s\n", i+1, stats.total, ColorCyan, relPath, ColorReset)
+		log.WithCtx(cmd.Context()).Info(fmt.Sprintf("[%d/%d] 处理: %s", i+1, stats.total, relPath))
 
-		if err := processFile(filePath, client); err != nil {
-			fmt.Printf("  %s❌ 失败: %v%s\n", ColorRed, err, ColorReset)
+		if err := processFile(filePath, client, cmd.Context()); err != nil {
+			log.WithCtx(cmd.Context()).Error(fmt.Sprintf("❌ 失败: %v", err))
 			stats.failed++
 		} else {
 			stats.success++
 		}
-		fmt.Println()
 	}
 
 	// 打印汇总
-	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	fmt.Printf("%s📊 处理完成%s\n", ColorBold, ColorReset)
-	fmt.Printf("  总计: %d  成功: %s%d%s  失败: %s%d%s\n",
-		stats.total,
-		ColorGreen, stats.success, ColorReset,
-		ColorRed, stats.failed, ColorReset,
-	)
-	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	log.WithCtx(cmd.Context()).Infof("📊 处理完成 - 总计: %d, 成功: %d, 失败: %d",
+		stats.total, stats.success, stats.failed)
 
 	return nil
 }
 
 // processFile 处理单个音乐文件
-func processFile(filePath string, client *meting.Client) error {
+func processFile(filePath string, client *meting.Client, ctx context.Context) error {
 	// 1. 读取文件现有元数据
 	mf, err := metadata.ReadMusicFile(filePath)
 	if err != nil {
-		fmt.Printf("  %s⚠️  读取元数据失败: %v，尝试从文件名推断%s\n", ColorYellow, err, ColorReset)
+		log.WithCtx(ctx).Warn(fmt.Sprintf("⚠️  读取元数据失败: %v，尝试从文件名推断", err))
 		mf = guessFromFilename(filePath)
 	}
 
@@ -137,24 +125,22 @@ func processFile(filePath string, client *meting.Client) error {
 			if mf.Artist == "" && guessed.Artist != "" {
 				mf.Artist = guessed.Artist
 			}
-			fmt.Printf("  💡 从文件名推断: %s - %s\n", mf.Artist, mf.Title)
+			log.WithCtx(ctx).Info(fmt.Sprintf("💡 从文件名推断: %s - %s", mf.Artist, mf.Title))
 		} else {
 			// 如果无法从文件名推断，使用不带扩展名的文件名作为标题
 			name := filepath.Base(filePath)
 			name = strings.TrimSuffix(name, filepath.Ext(name))
 			mf.Title = name
-			fmt.Printf("  💡 使用文件名作为标题: %s\n", mf.Title)
+			log.WithCtx(ctx).Info(fmt.Sprintf("💡 使用文件名作为标题: %s", mf.Title))
 		}
 	}
 
-	fmt.Printf("  标题: %s\n", mf.Title)
-	fmt.Printf("  歌手: %s\n", mf.Artist)
-	fmt.Printf("  专辑: %s\n", mf.Album)
-	fmt.Printf("  歌词: %s  封面: %s\n", boolIcon(mf.HasLyrics), boolIcon(mf.HasCover))
+	log.WithCtx(ctx).Infof("文件信息 - 标题: %s, 歌手: %s, 专辑: %s, 有歌词: %v, 有封面: %v",
+		mf.Title, mf.Artist, mf.Album, mf.HasLyrics, mf.HasCover)
 
 	// 2. 构建搜索关键词
 	keyword := buildSearchKeyword(mf.Title, mf.Artist)
-	fmt.Printf("  🔍 搜索: \"%s\"\n", keyword)
+	log.WithCtx(ctx).Info(fmt.Sprintf("🔍 搜索: \"%s\"", keyword))
 
 	// 3. 搜索歌曲
 	songs, err := client.Search(keyword)
@@ -168,14 +154,14 @@ func processFile(filePath string, client *meting.Client) error {
 
 	// 4. 选择最佳匹配
 	bestMatch := findBestMatch(songs, mf.Title, mf.Artist)
-	fmt.Printf("  ✅ 匹配: %s - %s (ID: %s)\n", bestMatch.Author, bestMatch.Title, bestMatch.SongID)
+	log.WithCtx(ctx).Info(fmt.Sprintf("✅ 匹配: %s - %s (ID: %s)", bestMatch.Author, bestMatch.Title, bestMatch.SongID))
 
 	if bestMatch.SongID == "" {
 		return fmt.Errorf("无法获取歌曲 ID")
 	}
 
 	if dryRun {
-		fmt.Printf("  %s🔍 预览模式，不修改文件%s\n", ColorYellow, ColorReset)
+		log.WithCtx(ctx).Info("🔍 预览模式，不修改文件")
 		return nil
 	}
 
@@ -183,9 +169,9 @@ func processFile(filePath string, client *meting.Client) error {
 	if !skipLyrics {
 		needLyrics := !mf.HasLyrics || forceUpdate
 		if needLyrics {
-			writeLyricsFromURL(filePath, client, bestMatch.Lrc)
+			writeLyricsFromURL(filePath, client, bestMatch.Lrc, ctx)
 		} else {
-			fmt.Printf("  📝 歌词已存在，跳过\n")
+			log.WithCtx(ctx).Info("📝 歌词已存在，跳过")
 		}
 	}
 
@@ -193,9 +179,9 @@ func processFile(filePath string, client *meting.Client) error {
 	if !skipCover {
 		needCover := !mf.HasCover || forceUpdate
 		if needCover {
-			writeCoverFromURL(filePath, client, bestMatch.Pic)
+			writeCoverFromURL(filePath, client, bestMatch.Pic, ctx)
 		} else {
-			fmt.Printf("  🖼️  封面已存在，跳过\n")
+			log.WithCtx(ctx).Info("🖼️  封面已存在，跳过")
 		}
 	}
 
@@ -203,29 +189,29 @@ func processFile(filePath string, client *meting.Client) error {
 }
 
 // writeLyricsFromURL 从 URL 获取并写入歌词（URL 已包含正确的 auth token）
-func writeLyricsFromURL(filePath string, client *meting.Client, lrcURL string) {
-	fmt.Printf("  📝 获取歌词...")
+func writeLyricsFromURL(filePath string, client *meting.Client, lrcURL string, ctx context.Context) {
+	log.WithCtx(ctx).Info("📝 获取歌词...")
 
 	if lrcURL == "" {
-		fmt.Printf(" %s歌词 URL 为空%s\n", ColorYellow, ColorReset)
+		log.WithCtx(ctx).Warn("歌词 URL 为空")
 		return
 	}
 
 	lyrics, err := client.GetLyricsFromURL(lrcURL)
 	if err != nil {
-		fmt.Printf(" %s失败: %v%s\n", ColorRed, err, ColorReset)
+		log.WithCtx(ctx).Error(fmt.Sprintf("失败: %v", err))
 		return
 	}
 	if strings.TrimSpace(lyrics) == "" {
-		fmt.Printf(" %s歌词为空%s\n", ColorYellow, ColorReset)
+		log.WithCtx(ctx).Warn("歌词为空")
 		return
 	}
 
 	if saveExternal {
 		if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
-			fmt.Printf(" %s写入 .lrc 失败: %v%s\n", ColorRed, err, ColorReset)
+			log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
 		} else {
-			fmt.Printf(" %s✅ 已保存 .lrc 文件%s\n", ColorGreen, ColorReset)
+			log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件")
 		}
 		return
 	}
@@ -233,9 +219,9 @@ func writeLyricsFromURL(filePath string, client *meting.Client, lrcURL string) {
 	// MP3 格式可以直接嵌入歌词
 	if metadata.IsMP3(filePath) {
 		if err := metadata.WriteLyricsToMP3(filePath, lyrics); err != nil {
-			fmt.Printf(" %s写入失败: %v%s\n", ColorRed, err, ColorReset)
+			log.WithCtx(ctx).Error(fmt.Sprintf("写入失败: %v", err))
 		} else {
-			fmt.Printf(" %s✅ 已嵌入%s\n", ColorGreen, ColorReset)
+			log.WithCtx(ctx).Info("✅ 已嵌入")
 		}
 		return
 	}
@@ -243,42 +229,42 @@ func writeLyricsFromURL(filePath string, client *meting.Client, lrcURL string) {
 	// 其他格式尝试使用 ffmpeg 嵌入
 	if metadata.SupportsEmbedding() {
 		if err := metadata.WriteLyricsWithFFmpeg(filePath, lyrics); err != nil {
-			fmt.Printf(" %sffmpeg 写入失败: %v，回退到 .lrc 文件%s\n", ColorYellow, err, ColorReset)
+			log.WithCtx(ctx).Warn(fmt.Sprintf("ffmpeg 写入失败: %v，回退到 .lrc 文件", err))
 			if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
-				fmt.Printf(" %s写入 .lrc 失败: %v%s\n", ColorRed, err, ColorReset)
+				log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
 			} else {
-				fmt.Printf(" %s✅ 已保存 .lrc 文件%s\n", ColorGreen, ColorReset)
+				log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件")
 			}
 		} else {
-			fmt.Printf(" %s✅ 已嵌入 (via ffmpeg)%s\n", ColorGreen, ColorReset)
+			log.WithCtx(ctx).Info("✅ 已嵌入 (via ffmpeg)")
 		}
 		return
 	}
 
 	// ffmpeg 不可用，回退到 .lrc 文件
 	if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
-		fmt.Printf(" %s写入 .lrc 失败: %v%s\n", ColorRed, err, ColorReset)
+		log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
 	} else {
-		fmt.Printf(" %s✅ 已保存 .lrc 文件（ffmpeg 不可用）%s\n", ColorGreen, ColorReset)
+		log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件（ffmpeg 不可用）")
 	}
 }
 
 // writeCoverFromURL 从 URL 获取并写入封面（URL 已包含正确的 auth token）
-func writeCoverFromURL(filePath string, client *meting.Client, picURL string) {
-	fmt.Printf("  🖼️  获取封面...")
+func writeCoverFromURL(filePath string, client *meting.Client, picURL string, ctx context.Context) {
+	log.WithCtx(ctx).Info("🖼️  获取封面...")
 
 	if picURL == "" {
-		fmt.Printf(" %s封面 URL 为空%s\n", ColorYellow, ColorReset)
+		log.WithCtx(ctx).Warn("封面 URL 为空")
 		return
 	}
 
 	coverData, mimeType, err := client.DownloadCoverFromURL(picURL)
 	if err != nil {
-		fmt.Printf(" %s失败: %v%s\n", ColorRed, err, ColorReset)
+		log.WithCtx(ctx).Error(fmt.Sprintf("失败: %v", err))
 		return
 	}
 	if len(coverData) == 0 {
-		fmt.Printf(" %s封面数据为空%s\n", ColorYellow, ColorReset)
+		log.WithCtx(ctx).Warn("封面数据为空")
 		return
 	}
 
@@ -288,41 +274,41 @@ func writeCoverFromURL(filePath string, client *meting.Client, picURL string) {
 
 	if saveExternal {
 		if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
-			fmt.Printf(" %s写入封面文件失败: %v%s\n", ColorRed, err, ColorReset)
+			log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 		} else {
-			fmt.Printf(" %s✅ 已保存封面文件 (%d KB)%s\n", ColorGreen, len(coverData)/1024, ColorReset)
+			log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)", len(coverData)/1024))
 		}
 		return
 	}
 
 	if metadata.IsMP3(filePath) {
 		if err := metadata.WriteCoverToMP3(filePath, coverData, mimeType); err != nil {
-			fmt.Printf(" %s写入失败: %v%s\n", ColorRed, err, ColorReset)
+			log.WithCtx(ctx).Error(fmt.Sprintf("写入失败: %v", err))
 		} else {
-			fmt.Printf(" %s✅ 已嵌入 (%d KB)%s\n", ColorGreen, len(coverData)/1024, ColorReset)
+			log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已嵌入 (%d KB)", len(coverData)/1024))
 		}
 		return
 	}
 
 	if metadata.SupportsEmbedding() {
 		if err := metadata.WriteCoverWithFFmpeg(filePath, coverData); err != nil {
-			fmt.Printf(" %sffmpeg 写入失败: %v，回退到 .jpg 文件%s\n", ColorYellow, err, ColorReset)
+			log.WithCtx(ctx).Warn(fmt.Sprintf("ffmpeg 写入失败: %v，回退到 .jpg 文件", err))
 			if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
-				fmt.Printf(" %s写入封面文件失败: %v%s\n", ColorRed, err, ColorReset)
+				log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 			} else {
-				fmt.Printf(" %s✅ 已保存封面文件 (%d KB)%s\n", ColorGreen, len(coverData)/1024, ColorReset)
+				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)", len(coverData)/1024))
 			}
 		} else {
-			fmt.Printf(" %s✅ 已嵌入 (via ffmpeg, %d KB)%s\n", ColorGreen, len(coverData)/1024, ColorReset)
+			log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已嵌入 (via ffmpeg, %d KB)", len(coverData)/1024))
 		}
 		return
 	}
 
 	// ffmpeg 不可用，回退到 .jpg 文件
 	if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
-		fmt.Printf(" %s写入封面文件失败: %v%s\n", ColorRed, err, ColorReset)
+		log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 	} else {
-		fmt.Printf(" %s✅ 已保存封面文件 (%d KB, ffmpeg 不可用)%s\n", ColorGreen, len(coverData)/1024, ColorReset)
+		log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB, ffmpeg 不可用)", len(coverData)/1024))
 	}
 }
 

@@ -2,9 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/youcd/toolkit/log"
 )
 
 var (
@@ -46,9 +46,11 @@ var rootCmd = &cobra.Command{
 
 // Execute 执行根命令
 func Execute() {
+	// 初始化日志
+	log.Init(nil)
+
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s错误: %v%s\n", ColorRed, err, ColorReset)
-		os.Exit(1)
+		log.WithCtx(rootCmd.Context()).Error(err)
 	}
 }
 
