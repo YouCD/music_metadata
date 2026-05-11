@@ -8,6 +8,8 @@
 - 📝 嵌入歌词（支持翻译歌词合并）
 - 🖼️ 嵌入封面图片
 - 🏷️ 写入标题、歌手、专辑、日期等基础元数据
+- ✏️ 手动设置自定义元数据字段
+- 🗑️ 删除指定的元数据标签
 - 📊 查看音乐文件元数据信息
 - ⚡ 并发处理，支持自定义并发数
 - 🔄 智能跳过元信息完整的文件
@@ -112,7 +114,7 @@ music_metadata info song.flac
 music_metadata info ./music --complete
 music_metadata info ./music -c
 
-# 显示详细信息（年份、流派、音轨）
+# 显示详细信息（自动显示有值的扩展字段）
 music_metadata info ./music --all
 music_metadata info ./music -a
 
@@ -120,12 +122,88 @@ music_metadata info ./music -a
 music_metadata info ./music -ac
 ```
 
+`--all` 模式下会自动显示有值的扩展字段（date、genre、track、comment、composer、album_artist、copyright），全为空的列自动隐藏。
+
 #### info 选项
 
 | 选项 | 简写 | 默认值 | 说明 |
 |------|------|--------|------|
-| `--all` | `-a` | false | 显示详细信息（年份、流派、音轨） |
+| `--all` | `-a` | false | 显示详细信息（自动显示有值的扩展字段） |
 | `--complete` | `-c` | false | 显示元信息完整的文件（默认只显示不完整的） |
+
+### set — 设置自定义元数据
+
+手动设置音乐文件的元数据标签，支持标准标签和自定义标签。
+
+```bash
+# 设置单个标签
+music_metadata set song.flac --tag title=新标题
+
+# 设置多个标签
+music_metadata set song.flac --tag artist=歌手 --tag album=专辑
+
+# 设置自定义标签
+music_metadata set song.mp3 --tag custom_field=自定义值
+
+# 批量设置目录中所有文件
+music_metadata set ./music --tag genre=Pop
+
+# 预览模式
+music_metadata set song.flac --tag title=新标题 --dry-run
+
+# 设置并发数
+music_metadata set ./music --tag genre=Pop -w 5
+```
+
+#### 常用标签名
+
+`title`, `artist`, `album`, `album_artist`, `date`, `genre`, `comment`, `composer`, `copyright`, `track`, `disc`, `lyrics`
+
+也支持任意自定义标签名。
+
+#### set 选项
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `--tag` | | 设置标签 key=value（可多次指定） |
+| `--workers` | `-w` | 10 | 并发处理数 |
+
+### remove — 删除元数据
+
+删除音乐文件中指定的元数据标签，支持删除内嵌元数据和外部关联文件。
+
+```bash
+# 删除歌词
+music_metadata remove song.mp3 --tag lyrics
+
+# 删除歌词和封面
+music_metadata remove song.mp3 --tag lyrics,cover
+
+# 删除标题和歌手
+music_metadata remove song.flac --tag title,artist
+
+# 批量删除目录中所有文件的封面
+music_metadata remove ./music --tag cover
+
+# 预览模式（不实际删除）
+music_metadata remove song.flac --tag cover --dry-run
+
+# 设置并发数
+music_metadata remove ./music --tag cover -w 5
+```
+
+> `lyrics` 和 `cover` 会同时删除内嵌元数据和外部文件（.lrc/.jpg）。APE 格式仅删除外部文件。
+
+#### 支持的标签名
+
+`title`, `artist`, `album`, `album_artist`, `date`, `genre`, `comment`, `composer`, `copyright`, `track`, `disc`, `lyrics`, `cover`
+
+#### remove 选项
+
+| 选项 | 简写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--tag` | `-t` | | 要删除的标签名，多个用逗号分隔 |
+| `--workers` | `-w` | 10 | 并发处理数 |
 
 ### 全局选项
 
@@ -155,10 +233,12 @@ music_metadata info ./music -ac
 ├── cmd/
 │   ├── root.go              # 根命令和全局选项
 │   ├── scan.go              # scan 命令（扫描补全元数据）
-│   └── info.go              # info 命令（查看元数据信息）
+│   ├── info.go              # info 命令（查看元数据信息）
+│   ├── set.go               # set 命令（设置自定义元数据）
+│   └── remove.go            # remove 命令（删除元数据）
 ├── metadata/
-│   ├── metadata.go          # 元数据读取和文件查找
-│   ├── writer.go            # 元数据写入（id3v2 / ffmpeg）
+│   ├── metadata.go          # 元数据读取、MusicFile 结构体、标签常量
+│   ├── writer.go            # 元数据写入和删除（id3v2 / ffmpeg）
 │   └── wav.go               # WAV RIFF LIST/INFO 纯 Go 解析
 ├── provider/
 │   ├── provider.go          # Provider 接口定义

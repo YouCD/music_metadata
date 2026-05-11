@@ -488,6 +488,120 @@ func RemoveExternalFiles(filePath string, tags []string) []string {
 	return removed
 }
 
+// SetMetadataToMP3 设置 MP3 文件的自定义元数据标签
+// tags 参数为 key=value 对的 map
+func SetMetadataToMP3(filePath string, tags map[string]string) error {
+	tag, err := id3v2.Open(filePath, id3v2.Options{Parse: true})
+	if err != nil {
+		return fmt.Errorf("打开 MP3 文件失败: %w", err)
+	}
+	defer tag.Close()
+
+	for k, v := range tags {
+		switch strings.ToLower(k) {
+		case TagTitle, "tit2":
+			tag.SetTitle(v)
+		case TagArtist, "tpe1":
+			tag.SetArtist(v)
+		case TagAlbum, "talb":
+			tag.SetAlbum(v)
+		case TagDate, "year", "tdrc":
+			tag.SetYear(v)
+		case TagGenre, "tcon":
+			tag.SetGenre(v)
+		case TagComment, "comm":
+			tag.DeleteFrames("COMM")
+			if v != "" {
+				commentFrame := id3v2.CommentFrame{
+					Encoding:    id3v2.EncodingUTF8,
+					Language:    "eng",
+					Description: "",
+					Text:        v,
+				}
+				tag.AddCommentFrame(commentFrame)
+			}
+		case TagComposer, "tcom":
+			tag.DeleteFrames("TCOM")
+			if v != "" {
+				tag.AddTextFrame(tag.CommonID("Composer"), id3v2.EncodingUTF8, v)
+			}
+		case TagAlbumArtist, "tpe2":
+			tag.DeleteFrames("TPE2")
+			if v != "" {
+				tag.AddTextFrame(tag.CommonID("Album artist"), id3v2.EncodingUTF8, v)
+			}
+		case TagCopyright, "tcop":
+			tag.DeleteFrames("TCOP")
+			if v != "" {
+				tag.AddTextFrame(tag.CommonID("Copyright message"), id3v2.EncodingUTF8, v)
+			}
+		case TagTrack, "trck":
+			tag.DeleteFrames("TRCK")
+			if v != "" {
+				tag.AddTextFrame(tag.CommonID("Track number/Position in set"), id3v2.EncodingUTF8, v)
+			}
+		case TagDisc, "tpos":
+			tag.DeleteFrames("TPOS")
+			if v != "" {
+				tag.AddTextFrame(tag.CommonID("Part of a set"), id3v2.EncodingUTF8, v)
+			}
+		default:
+			// 自定义帧：使用 TXXX (User defined text information) 帧
+			if v != "" {
+				frame := id3v2.UserDefinedTextFrame{
+					Encoding:    id3v2.EncodingUTF8,
+					Description: k,
+					Value:       v,
+				}
+				tag.AddUserDefinedTextFrame(frame)
+			}
+		}
+	}
+
+	if err := tag.Save(); err != nil {
+		return fmt.Errorf("保存 MP3 元数据失败: %w", err)
+	}
+
+	return nil
+}
+
+// SetMetadataWithFFmpeg 使用 ffmpeg 设置自定义元数据标签
+// tags 参数为 key=value 对的 map
+func SetMetadataWithFFmpeg(filePath string, tags map[string]string) error {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	tmpOut := filePath + ".tmp" + ext
+
+	// APE 格式不支持 ffmpeg muxer
+	if IsAPE(filePath) {
+		return fmt.Errorf("APE 格式不支持写入内嵌元数据")
+	}
+
+	var args []string
+	args = append(args, "-y", "-i", filePath)
+
+	// 添加所有元数据标签
+	for k, v := range tags {
+		args = append(args, "-metadata", fmt.Sprintf("%s=%s", k, v))
+	}
+
+	args = append(args, "-c:a", "copy", "-c:v", "copy", tmpOut)
+
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		os.Remove(tmpOut)
+		return fmt.Errorf("ffmpeg 设置元数据失败: %w", err)
+	}
+
+	if err := os.Rename(tmpOut, filePath); err != nil {
+		os.Remove(tmpOut)
+		return fmt.Errorf("替换原文件失败: %w", err)
+	}
+
+	return nil
+}
+
 // SupportsEmbedding 检查 ffmpeg 是否可用
 func SupportsEmbedding() bool {
 	_, err := exec.LookPath("ffmpeg")

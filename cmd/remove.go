@@ -6,9 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/YouCD/music_metadata/metadata"
 
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"github.com/youcd/toolkit/log"
 )
@@ -30,7 +33,8 @@ var removeCmd = &cobra.Command{
 		"  music_metadata remove song.mp3 --tag lyrics\n"+
 		"  music_metadata remove song.mp3 --tag lyrics,cover\n"+
 		"  music_metadata remove ./music --tag cover\n"+
-		"  music_metadata remove song.flac --tag title,artist --dry-run\n",
+		"  music_metadata remove song.flac --tag title,artist --dry-run\n"+
+		"  music_metadata remove ./music --tag cover -w 5\n",
 		ColorBold, ColorReset,
 		ColorCyan, ColorReset,
 		ColorCyan, ColorReset,
@@ -87,19 +91,55 @@ func runRemove(cmd *cobra.Command, args []string) error {
 
 	log.WithCtx(cmd.Context()).Infof("🗑️  删除元数据 - 文件数: %d, 标签: %s", len(files), strings.Join(tags, ", "))
 
-	successCount := 0
-	failedCount := 0
+	// 统计（使用原子操作保证并发安全）
+	var successCount int32
+	var failedCount int32
 
-	for _, filePath := range files {
-		if err := removeMetadataFromFile(filePath, tags, cmd.Context()); err != nil {
-			log.WithCtx(cmd.Context()).Error(fmt.Sprintf("❌ %s: %v", filePath, err))
-			failedCount++
-		} else {
-			successCount++
-		}
+	// 创建进度条，期间将日志级别设为 error，避免日志干扰进度条显示
+	log.SetLogLevel("error")
+
+	progressBar, err := pterm.DefaultProgressbar.WithTotal(len(files)).WithTitle("删除元数据").Start()
+	if err != nil {
+		log.SetLogLevel("info")
+		log.WithCtx(cmd.Context()).Error(fmt.Sprintf("创建进度条失败: %v", err))
 	}
 
-	log.WithCtx(cmd.Context()).Infof("📊 删除完成 - 总计: %d, 成功: %d, 失败: %d",
+	// 使用 semaphore 控制并发数
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+
+	for _, filePath := range files {
+		wg.Add(1)
+		sem <- struct{}{} // 获取信号量
+
+		go func(fp string) {
+			defer wg.Done()
+			defer func() { <-sem }() // 释放信号量
+
+			relPath, _ := filepath.Rel(path, fp)
+
+			if err := removeMetadataFromFile(fp, tags, cmd.Context()); err != nil {
+				atomic.AddInt32(&failedCount, 1)
+				_ = relPath // 并发模式下不打印错误日志，避免干扰进度条
+			} else {
+				atomic.AddInt32(&successCount, 1)
+			}
+
+			if progressBar != nil {
+				progressBar.UpdateTitle(relPath)
+				progressBar.Increment()
+			}
+		}(filePath)
+	}
+
+	// 等待所有任务完成
+	wg.Wait()
+
+	// 恢复日志级别
+	log.SetLogLevel("info")
+
+	// 打印汇总
+	pterm.Info.Printfln("📊 删除完成 - 总计: %d, 成功: %d, 失败: %d",
 		len(files), successCount, failedCount)
 
 	return nil
@@ -158,7 +198,7 @@ func removeMetadataFromFile(filePath string, tags []string, ctx context.Context)
 			log.WithCtx(ctx).Info(fmt.Sprintf("✅ %s: 已删除 MP3 标签: %s", filepath.Base(filePath), strings.Join(embedTags, ", ")))
 		} else if metadata.IsAPE(filePath) {
 			// APE 不支持删除内嵌元数据
-			log.WithCtx(ctx).Warn("⚠️  APE 格式不支持删除内嵌元数据，仅删除外部文件")
+			log.WithCtx(ctx).Warn(fmt.Sprintf("⚠️  %s: APE 格式不支持删除内嵌元数据，仅删除外部文件", filepath.Base(filePath)))
 		} else if metadata.SupportsEmbedding() {
 			// 其他格式使用 ffmpeg
 			if err := metadata.RemoveMetadataWithFFmpeg(filePath, embedTags); err != nil {
