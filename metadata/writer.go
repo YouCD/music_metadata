@@ -324,19 +324,25 @@ func writeMetadataWithFFmpeg(filePath, title, artist, album, date, lyrics string
 }
 
 // WriteLyricsFile 将歌词写入独立的 .lrc 文件
-func WriteLyricsFile(musicPath, lyrics string) error {
+// force 为 true 时覆盖已存在的文件
+func WriteLyricsFile(musicPath, lyrics string, force bool) error {
 	lrcPath := strings.TrimSuffix(musicPath, filepath.Ext(musicPath)) + ".lrc"
-	if _, err := os.Stat(lrcPath); err == nil {
-		return nil // 已存在，跳过
+	if !force {
+		if _, err := os.Stat(lrcPath); err == nil {
+			return nil // 已存在，跳过
+		}
 	}
 	return os.WriteFile(lrcPath, []byte(lyrics), 0o644)
 }
 
 // WriteCoverFile 将封面图片保存为独立文件
-func WriteCoverFile(musicPath string, coverData []byte) error {
+// force 为 true 时覆盖已存在的文件
+func WriteCoverFile(musicPath string, coverData []byte, force bool) error {
 	coverPath := strings.TrimSuffix(musicPath, filepath.Ext(musicPath)) + ".jpg"
-	if _, err := os.Stat(coverPath); err == nil {
-		return nil // 已存在，跳过
+	if !force {
+		if _, err := os.Stat(coverPath); err == nil {
+			return nil // 已存在，跳过
+		}
 	}
 	return os.WriteFile(coverPath, coverData, 0o644)
 }

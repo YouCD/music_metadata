@@ -5,11 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/YouCD/music_metadata/metadata"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"github.com/youcd/toolkit/log"
 )
@@ -102,60 +104,86 @@ func runInfo(cmd *cobra.Command, args []string) error {
 		{"copyright", (*metadata.MusicFile).GetCopyright},
 	}
 
-	// 第一遍：收集所有文件数据
+	// 第一遍：并发收集所有文件数据
 	type fileInfo struct {
 		relPath string
 		mf      *metadata.MusicFile
 		format  string
 		readErr bool
 	}
-	var infos []fileInfo
+	infos := make([]fileInfo, len(files))
 
-	for _, filePath := range files {
-		relPath, _ := filepath.Rel(baseDir, filePath)
-		ext := strings.ToLower(filepath.Ext(filePath))
-		formatStr := strings.TrimPrefix(ext, ".")
+	// 创建进度条
+	log.SetLogLevel("error")
+	progressBar, _ := pterm.DefaultProgressbar.WithTotal(len(files)).WithTitle("读取元数据").Start()
 
-		mf, err := metadata.ReadMusicFile(filePath)
-		if err != nil {
-			// dhowden/tag 读取失败，尝试回退方案
-			if metadata.IsWAV(filePath) {
-				mf, err = metadata.ReadMusicFileFromWAV(filePath)
+	// 使用 semaphore 控制并发数
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+
+	for i, filePath := range files {
+		wg.Add(1)
+		sem <- struct{}{} // 获取信号量
+
+		go func(idx int, fp string) {
+			defer wg.Done()
+			defer func() { <-sem }() // 释放信号量
+
+			relPath, _ := filepath.Rel(baseDir, fp)
+			ext := strings.ToLower(filepath.Ext(fp))
+			formatStr := strings.TrimPrefix(ext, ".")
+
+			mf, err := metadata.ReadMusicFile(fp)
+			if err != nil {
+				// dhowden/tag 读取失败，尝试回退方案
+				if metadata.IsWAV(fp) {
+					mf, err = metadata.ReadMusicFileFromWAV(fp)
+				}
 			}
-		}
 
-		// 尝试用 ffprobe 补充更多标签（ffprobe 能读取更多字段）
-		if metadata.SupportsEmbedding() {
-			if probeMf, probeErr := metadata.ReadMusicFileWithFFprobe(filePath); probeErr == nil && probeMf.Tags != nil {
-				if mf == nil {
-					mf = probeMf
-					err = nil
-				} else if mf.Tags == nil {
-					mf.Tags = probeMf.Tags
-				} else {
-					for k, v := range probeMf.Tags {
-						if _, exists := mf.Tags[k]; !exists && v != "" {
-							mf.Tags[k] = v
+			// 尝试用 ffprobe 补充更多标签（ffprobe 能读取更多字段）
+			if metadata.SupportsEmbedding() {
+				if probeMf, probeErr := metadata.ReadMusicFileWithFFprobe(fp); probeErr == nil && probeMf.Tags != nil {
+					if mf == nil {
+						mf = probeMf
+						err = nil
+					} else if mf.Tags == nil {
+						mf.Tags = probeMf.Tags
+					} else {
+						for k, v := range probeMf.Tags {
+							if _, exists := mf.Tags[k]; !exists && v != "" {
+								mf.Tags[k] = v
+							}
 						}
 					}
-				}
-				if probeMf.HasLyrics {
-					mf.HasLyrics = true
-				}
-				if probeMf.HasCover {
-					mf.HasCover = true
+					if probeMf.HasLyrics {
+						mf.HasLyrics = true
+					}
+					if probeMf.HasCover {
+						mf.HasCover = true
+					}
 				}
 			}
-		}
 
-		fi := fileInfo{
-			relPath: relPath,
-			mf:      mf,
-			format:  formatStr,
-			readErr: err != nil && mf == nil,
-		}
-		infos = append(infos, fi)
+			infos[idx] = fileInfo{
+				relPath: relPath,
+				mf:      mf,
+				format:  formatStr,
+				readErr: err != nil && mf == nil,
+			}
+
+			if progressBar != nil {
+				progressBar.UpdateTitle(relPath)
+				progressBar.Increment()
+			}
+		}(i, filePath)
 	}
+
+	// 等待所有任务完成
+	wg.Wait()
+
+	// 恢复日志级别
+	log.SetLogLevel("info")
 
 	// 判断哪些扩展列有值（至少一个文件有非空值）
 	activeExtCols := make([]extColumn, 0, len(extColumns))

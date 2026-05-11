@@ -147,23 +147,65 @@ func runRemove(cmd *cobra.Command, args []string) error {
 
 // removeMetadataFromFile 从单个文件中删除指定的元数据
 func removeMetadataFromFile(filePath string, tags []string, ctx context.Context) error {
-	// 区分内嵌标签和外部文件标签
+	// 先读取文件元数据，检查要删除的标签是否存在
+	mf, err := readMusicFileMetadata(filePath)
+	if err != nil {
+		return fmt.Errorf("读取元数据失败: %w", err)
+	}
+
+	// 检查每个标签是否存在，过滤出实际存在的标签
 	var embedTags []string
 	var externalTags []string
+	var skippedTags []string
 
 	for _, t := range tags {
 		switch strings.ToLower(t) {
 		case "lyrics":
-			// 歌词：同时删除内嵌和外部文件
-			embedTags = append(embedTags, t)
-			externalTags = append(externalTags, t)
+			// 歌词：检查内嵌歌词和外部 .lrc 文件
+			hasEmbed := mf != nil && mf.HasLyrics
+			hasExternal := hasExternalLyricsFile(filePath)
+			if !hasEmbed && !hasExternal {
+				skippedTags = append(skippedTags, t)
+				continue
+			}
+			if hasEmbed {
+				embedTags = append(embedTags, t)
+			}
+			if hasExternal {
+				externalTags = append(externalTags, t)
+			}
 		case "cover":
-			// 封面：同时删除内嵌和外部文件
-			embedTags = append(embedTags, t)
-			externalTags = append(externalTags, t)
+			// 封面：检查内嵌封面和外部 .jpg 文件
+			hasEmbed := mf != nil && mf.HasCover
+			hasExternal := hasExternalCoverFile(filePath)
+			if !hasEmbed && !hasExternal {
+				skippedTags = append(skippedTags, t)
+				continue
+			}
+			if hasEmbed {
+				embedTags = append(embedTags, t)
+			}
+			if hasExternal {
+				externalTags = append(externalTags, t)
+			}
 		default:
+			// 普通标签：检查 Tags map 中是否存在
+			if mf == nil || !hasTagValue(mf, t) {
+				skippedTags = append(skippedTags, t)
+				continue
+			}
 			embedTags = append(embedTags, t)
 		}
+	}
+
+	// 所有标签都不存在，跳过该文件
+	if len(embedTags) == 0 && len(externalTags) == 0 {
+		log.WithCtx(ctx).Info(fmt.Sprintf("⏭️  %s: 标签不存在，跳过 (%s)", filepath.Base(filePath), strings.Join(skippedTags, ", ")))
+		return nil
+	}
+
+	if len(skippedTags) > 0 {
+		log.WithCtx(ctx).Info(fmt.Sprintf("⏭️  %s: 标签不存在，跳过 (%s)", filepath.Base(filePath), strings.Join(skippedTags, ", ")))
 	}
 
 	// dry-run 模式下只显示预览信息
@@ -196,6 +238,12 @@ func removeMetadataFromFile(filePath string, tags []string, ctx context.Context)
 				return fmt.Errorf("删除 MP3 元数据失败: %w", err)
 			}
 			log.WithCtx(ctx).Info(fmt.Sprintf("✅ %s: 已删除 MP3 标签: %s", filepath.Base(filePath), strings.Join(embedTags, ", ")))
+		} else if metadata.IsWAV(filePath) {
+			// WAV 使用纯 Go 删除 RIFF LIST/INFO chunk
+			if err := metadata.RemoveMetadataFromWAV(filePath, embedTags); err != nil {
+				return fmt.Errorf("删除 WAV 元数据失败: %w", err)
+			}
+			log.WithCtx(ctx).Info(fmt.Sprintf("✅ %s: 已删除 WAV 标签: %s", filepath.Base(filePath), strings.Join(embedTags, ", ")))
 		} else if metadata.IsAPE(filePath) {
 			// APE 不支持删除内嵌元数据
 			log.WithCtx(ctx).Warn(fmt.Sprintf("⚠️  %s: APE 格式不支持删除内嵌元数据，仅删除外部文件", filepath.Base(filePath)))
@@ -211,6 +259,95 @@ func removeMetadataFromFile(filePath string, tags []string, ctx context.Context)
 	}
 
 	return nil
+}
+
+// readMusicFileMetadata 读取音乐文件元数据（兼容各种格式）
+func readMusicFileMetadata(filePath string) (*metadata.MusicFile, error) {
+	var mf *metadata.MusicFile
+	var err error
+
+	// 尝试使用 dhowden/tag 读取
+	mf, err = metadata.ReadMusicFile(filePath)
+	if err != nil {
+		// dhowden/tag 读取失败，尝试回退方案
+		if metadata.IsWAV(filePath) {
+			mf, err = metadata.ReadMusicFileFromWAV(filePath)
+		}
+	}
+
+	// 尝试用 ffprobe 补充更多标签（ffprobe 能读取更多字段）
+	if metadata.SupportsEmbedding() {
+		if probeMf, probeErr := metadata.ReadMusicFileWithFFprobe(filePath); probeErr == nil && probeMf.Tags != nil {
+			if mf == nil {
+				mf = probeMf
+				err = nil
+			} else if mf.Tags == nil {
+				mf.Tags = probeMf.Tags
+			} else {
+				for k, v := range probeMf.Tags {
+					if _, exists := mf.Tags[k]; !exists && v != "" {
+						mf.Tags[k] = v
+					}
+				}
+			}
+			if probeMf.HasLyrics {
+				mf.HasLyrics = true
+			}
+			if probeMf.HasCover {
+				mf.HasCover = true
+			}
+		}
+	}
+
+	if mf == nil {
+		return nil, err
+	}
+	return mf, nil
+}
+
+// hasTagValue 检查 MusicFile 中指定标签是否有值
+func hasTagValue(mf *metadata.MusicFile, tag string) bool {
+	switch strings.ToLower(tag) {
+	case metadata.TagTitle, "tit2":
+		return mf.GetTitle() != ""
+	case metadata.TagArtist, "tpe1":
+		return mf.GetArtist() != ""
+	case metadata.TagAlbum, "talb":
+		return mf.GetAlbum() != ""
+	case metadata.TagDate, "year", "tdrc":
+		return mf.GetDate() != ""
+	case metadata.TagGenre, "tcon":
+		return mf.GetGenre() != ""
+	case metadata.TagComment, "comm":
+		return mf.GetComment() != ""
+	case metadata.TagAlbumArtist, "tpe2":
+		return mf.GetAlbumArtist() != ""
+	case metadata.TagComposer, "tcom":
+		return mf.GetComposer() != ""
+	case metadata.TagCopyright, "tcop":
+		return mf.GetCopyright() != ""
+	case metadata.TagTrack, "trck":
+		return mf.GetTrack() != ""
+	case metadata.TagDisc, "tpos":
+		return mf.GetDisc() != ""
+	default:
+		// 自定义标签：直接查 Tags map
+		return mf.GetTag(tag) != ""
+	}
+}
+
+// hasExternalLyricsFile 检查是否存在外部歌词文件
+func hasExternalLyricsFile(filePath string) bool {
+	lrcPath := strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".lrc"
+	_, err := os.Stat(lrcPath)
+	return err == nil
+}
+
+// hasExternalCoverFile 检查是否存在外部封面文件
+func hasExternalCoverFile(filePath string) bool {
+	coverPath := strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".jpg"
+	_, err := os.Stat(coverPath)
+	return err == nil
 }
 
 // parseTagList 解析逗号分隔的标签列表

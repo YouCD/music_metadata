@@ -290,14 +290,14 @@ func writeMetadata(filePath, title, artist, album, date, lyrics string, coverDat
 	if saveExternal {
 		// 保存为外部文件
 		if lyrics != "" {
-			if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
+			if err := metadata.WriteLyricsFile(filePath, lyrics, forceUpdate); err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件")
 			}
 		}
 		if len(coverData) > 0 {
-			if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
+			if err := metadata.WriteCoverFile(filePath, coverData, forceUpdate); err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)", len(coverData)/1024))
@@ -321,14 +321,14 @@ func writeMetadata(filePath, title, artist, album, date, lyrics string, coverDat
 		}
 		// 歌词和封面保存为外部文件
 		if lyrics != "" {
-			if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
+			if err := metadata.WriteLyricsFile(filePath, lyrics, forceUpdate); err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件（WAV 不支持嵌入歌词）")
 			}
 		}
 		if len(coverData) > 0 {
-			if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
+			if err := metadata.WriteCoverFile(filePath, coverData, forceUpdate); err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)（WAV 不支持嵌入封面）", len(coverData)/1024))
@@ -340,14 +340,14 @@ func writeMetadata(filePath, title, artist, album, date, lyrics string, coverDat
 	// APE 格式：ffmpeg 不支持 APE muxer，所有元数据保存为外部文件
 	if metadata.IsAPE(filePath) {
 		if lyrics != "" {
-			if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
+			if err := metadata.WriteLyricsFile(filePath, lyrics, forceUpdate); err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件（APE 不支持嵌入歌词）")
 			}
 		}
 		if len(coverData) > 0 {
-			if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
+			if err := metadata.WriteCoverFile(filePath, coverData, forceUpdate); err != nil {
 				log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 			} else {
 				log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)（APE 不支持嵌入封面）", len(coverData)/1024))
@@ -379,14 +379,14 @@ func writeMetadata(filePath, title, artist, album, date, lyrics string, coverDat
 			log.WithCtx(ctx).Warn(fmt.Sprintf("ffmpeg 写入失败: %v，回退到外部文件", err))
 			// 回退到外部文件
 			if lyrics != "" {
-				if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
+				if err := metadata.WriteLyricsFile(filePath, lyrics, forceUpdate); err != nil {
 					log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
 				} else {
 					log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件")
 				}
 			}
 			if len(coverData) > 0 {
-				if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
+				if err := metadata.WriteCoverFile(filePath, coverData, forceUpdate); err != nil {
 					log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 				} else {
 					log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB)", len(coverData)/1024))
@@ -400,14 +400,14 @@ func writeMetadata(filePath, title, artist, album, date, lyrics string, coverDat
 
 	// ffmpeg 不可用，回退到外部文件
 	if lyrics != "" {
-		if err := metadata.WriteLyricsFile(filePath, lyrics); err != nil {
+		if err := metadata.WriteLyricsFile(filePath, lyrics, forceUpdate); err != nil {
 			log.WithCtx(ctx).Error(fmt.Sprintf("写入 .lrc 失败: %v", err))
 		} else {
 			log.WithCtx(ctx).Info("✅ 已保存 .lrc 文件（ffmpeg 不可用）")
 		}
 	}
 	if len(coverData) > 0 {
-		if err := metadata.WriteCoverFile(filePath, coverData); err != nil {
+		if err := metadata.WriteCoverFile(filePath, coverData, forceUpdate); err != nil {
 			log.WithCtx(ctx).Error(fmt.Sprintf("写入封面文件失败: %v", err))
 		} else {
 			log.WithCtx(ctx).Info(fmt.Sprintf("✅ 已保存封面文件 (%d KB, ffmpeg 不可用)", len(coverData)/1024))
