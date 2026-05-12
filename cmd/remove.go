@@ -245,8 +245,11 @@ func removeMetadataFromFile(filePath string, tags []string, ctx context.Context)
 			}
 			log.WithCtx(ctx).Info(fmt.Sprintf("✅ %s: 已删除 WAV 标签: %s", filepath.Base(filePath), strings.Join(embedTags, ", ")))
 		} else if metadata.IsAPE(filePath) {
-			// APE 不支持删除内嵌元数据
-			log.WithCtx(ctx).Warn(fmt.Sprintf("⚠️  %s: APE 格式不支持删除内嵌元数据，仅删除外部文件", filepath.Base(filePath)))
+			// APE 格式：使用自定义实现删除元数据
+			if err := metadata.RemoveMetadataFromAPE(filePath, embedTags); err != nil {
+				return fmt.Errorf("删除 APE 元数据失败: %w", err)
+			}
+			log.WithCtx(ctx).Info(fmt.Sprintf("✅ %s: 已删除 APE 标签: %s", filepath.Base(filePath), strings.Join(embedTags, ", ")))
 		} else if metadata.SupportsEmbedding() {
 			// 其他格式使用 ffmpeg
 			if err := metadata.RemoveMetadataWithFFmpeg(filePath, embedTags); err != nil {

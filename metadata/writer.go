@@ -448,11 +448,6 @@ func RemoveMetadataWithFFmpeg(filePath string, tags []string) error {
 		args = append(args, "-metadata", fmt.Sprintf("%s=", t))
 	}
 
-	// APE 格式不支持 ffmpeg muxer
-	if IsAPE(filePath) {
-		return fmt.Errorf("APE 格式不支持删除内嵌元数据")
-	}
-
 	// WAV 格式：只支持基础元数据删除
 	if IsWAV(filePath) {
 		args = append(args, "-c:a", "copy", tmpOut)
@@ -598,11 +593,6 @@ func SetMetadataToMP3(filePath string, tags map[string]string) error {
 func SetMetadataWithFFmpeg(filePath string, tags map[string]string) error {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	tmpOut := filePath + ".tmp" + ext
-
-	// APE 格式不支持 ffmpeg muxer
-	if IsAPE(filePath) {
-		return fmt.Errorf("APE 格式不支持写入内嵌元数据")
-	}
 
 	var args []string
 	args = append(args, "-y", "-i", filePath)
