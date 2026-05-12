@@ -4,7 +4,7 @@
 
 ## ✨ 功能特性
 
-- 🔍 自动搜索匹配歌曲（网易云音乐数据源）
+- 🔍 自动搜索匹配歌曲（支持多个音乐平台）
 - 📝 嵌入歌词（支持翻译歌词合并）
 - 🖼️ 嵌入封面图片
 - 🏷️ 写入标题、歌手、专辑、日期等基础元数据
@@ -61,11 +61,15 @@ make build-all
 递归扫描目录中的音乐文件，自动搜索匹配歌曲并嵌入元数据。
 
 ```bash
-# 基本用法
+# 基本用法（默认使用网易云音乐）
 music_metadata scan ./music
 
 # 指定提供者
-music_metadata scan ./music -p netease
+music_metadata scan ./music -p netease    # 网易云音乐
+music_metadata scan ./music -p qqmusic    # QQ音乐
+music_metadata scan ./music -p migu       # 咪咕音乐
+music_metadata scan ./music -p baidu      # 百度音乐/千千音乐
+music_metadata scan ./music -p kugou      # 酷狗音乐
 
 # 预览模式（不修改文件）
 music_metadata scan ./music --dry-run
@@ -90,8 +94,8 @@ music_metadata scan ./music -w 5
 
 | 选项 | 简写 | 默认值 | 说明 |
 |------|------|--------|------|
-| `--provider` | `-p` | netease | 元数据提供者 |
-| `--api` | | | 自定义 API 地址 |
+| `--provider` | `-p` | netease | 元数据提供者（可选: netease, qqmusic, migu, baidu, kugou） |
+| `--api` | | | 自定义 API 地址（仅 netease 支持） |
 | `--dry-run` | | false | 仅显示信息，不修改文件 |
 | `--force` | `-f` | false | 强制更新已有元数据 |
 | `--no-lyrics` | | false | 不获取歌词 |
@@ -209,21 +213,31 @@ music_metadata remove ./music --tag cover -w 5
 
 | 选项 | 简写 | 默认值 | 说明 |
 |------|------|--------|------|
-| `--provider` | `-p` | netease | 元数据提供者 |
-| `--api` | | | 自定义 API 地址 |
+| `--provider` | `-p` | netease | 元数据提供者（可选: netease, qqmusic, migu, baidu, kugou） |
+| `--api` | | | 自定义 API 地址（仅 netease 支持） |
 | `--dry-run` | | false | 仅显示信息，不修改文件 |
 | `--force` | `-f` | false | 强制更新已有元数据 |
 
 ## 🔧 工作原理
 
 1. **文件名解析**：从文件名推断歌手和标题（支持 `歌手 - 标题`、`歌手-标题` 等格式）
-2. **在线搜索**：通过网易云音乐 API 搜索匹配歌曲
+2. **在线搜索**：通过选择的音乐平台 API 搜索匹配歌曲
 3. **智能匹配**：根据标题和歌手进行评分，选择最佳匹配
 4. **元数据写入**：
    - MP3：使用 [id3v2](https://github.com/bogem/id3v2) 库直接写入
    - FLAC/M4A/OGG/AAC/AIFF：通过 ffmpeg 嵌入元数据
    - WAV：基础元数据通过 ffmpeg 嵌入，歌词和封面保存为外部文件
    - APE：ffmpeg 不支持 APE muxer，所有元数据（歌词、封面）保存为外部文件
+
+## 🎵 支持的 Provider
+
+| Provider | 名称 | 搜索 | 歌词 | 封面 | 稳定性 | 备注 |
+|----------|------|------|------|------|--------|------|
+| netease | 网易云音乐 | ✅ | ✅ | ✅ | ⭐⭐⭐⭐⭐ | 默认Provider，最稳定 |
+| qqmusic | QQ音乐 | ✅ | ✅ | ✅ | ⭐⭐⭐⭐⭐ | 需要Base64解码 |
+| migu | 咪咕音乐 | ✅ | ✅ | ✅ | ⭐⭐⭐⭐⭐ | 非常稳定 |
+| baidu | 百度音乐/千千音乐 | ✅ | ✅ | ✅ | ⭐⭐⭐⭐ | 需要URL编码+签名 |
+| kugou | 酷狗音乐 | ✅ | ✅ | ✅ | ⭐⭐⭐⭐⭐ | 稳定可靠 |
 
 ## 🏗️ 项目结构
 
@@ -242,7 +256,16 @@ music_metadata remove ./music --tag cover -w 5
 │   └── wav.go               # WAV RIFF LIST/INFO 纯 Go 解析
 ├── provider/
 │   ├── provider.go          # Provider 接口定义
-│   └── netease.go           # 网易云音乐提供者实现
+│   ├── netease.go           # 网易云音乐提供者实现
+│   ├── qqmusic.go           # QQ音乐提供者实现
+│   ├── migu.go              # 咪咕音乐提供者实现
+│   ├── baidu.go             # 百度音乐/千千音乐提供者实现
+│   └── kugou.go             # 酷狗音乐提供者实现
+├── examples/
+│   ├── qqmusic_example.go   # QQ音乐示例程序
+│   ├── migu_example.go      # 咪咕音乐示例程序
+│   ├── baidu_example.go     # 百度音乐示例程序
+│   └── kugou_example.go     # 酷狗音乐示例程序
 ├── Makefile                 # 构建脚本
 └── go.mod                   # Go 模块定义
 ```

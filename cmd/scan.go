@@ -30,14 +30,17 @@ var scanCmd = &cobra.Command{
 	Long: fmt.Sprintf("%s扫描目录并补全音乐元数据%s\n\n"+
 		"递归扫描指定目录中的音乐文件，通过音乐 API 搜索匹配的歌曲，\n"+
 		"自动获取并嵌入歌词和封面图片到音频文件中。\n\n"+
+		"%s支持的提供者:%s netease, qqmusic, migu, baidu, kugou\n\n"+
 		"%s示例:%s\n"+
 		"  music_metadata scan ./music\n"+
-		"  music_metadata scan ./music -p netease\n"+
+		"  music_metadata scan ./music -p migu\n"+
+		"  music_metadata scan ./music -p qqmusic\n"+
 		"  music_metadata scan ./music --dry-run\n"+
 		"  music_metadata scan ./music --external\n"+
 		"  music_metadata scan ./music --no-lyrics --force\n"+
 		"  music_metadata scan ./music -w 5\n",
 		ColorBold, ColorReset,
+		ColorCyan, ColorReset,
 		ColorCyan, ColorReset,
 	),
 	Args: cobra.MaximumNArgs(1),
@@ -545,7 +548,15 @@ func newProvider(name, apiBase string) (provider.Provider, error) {
 	switch name {
 	case "netease":
 		return provider.NewNetEaseProvider(apiBase), nil
+	case "qqmusic":
+		return provider.NewQQMusicProvider(), nil
+	case "migu":
+		return provider.NewMiGuProvider(), nil
+	case "baidu":
+		return provider.NewBaiduProvider(), nil
+	case "kugou":
+		return provider.NewKugouProvider(), nil
 	default:
-		return nil, fmt.Errorf("未知的提供者: %s，可选: netease", name)
+		return nil, fmt.Errorf("未知的提供者: %s，可选: netease, qqmusic, migu, baidu, kugou", name)
 	}
 }

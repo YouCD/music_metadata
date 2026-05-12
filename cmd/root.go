@@ -31,7 +31,7 @@ var rootCmd = &cobra.Command{
 	Long: fmt.Sprintf("%s🎵 音乐元数据补全工具%s\n\n"+
 		"自动抓取并补全音乐文件的歌词、封面等元数据。\n"+
 		"支持 MP3、FLAC、M4A、OGG、WAV、APE、AIFF 等格式。\n\n"+
-		"%s支持的提供者:%s netease\n"+
+		"%s支持的提供者:%s netease, qqmusic, migu, baidu, kugou\n"+
 		"%s提示:%s 使用 --provider 指定数据源，--api 指定自定义 API 地址\n",
 		ColorBold, ColorReset,
 		ColorCyan, ColorReset,
