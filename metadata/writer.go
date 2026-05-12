@@ -324,15 +324,37 @@ func writeMetadataWithFFmpeg(filePath, title, artist, album, date, lyrics string
 }
 
 // WriteLyricsFile 将歌词写入独立的 .lrc 文件
+// WriteLyricsFile 将歌词保存为外部 .lrc 文件
 // force 为 true 时覆盖已存在的文件
-func WriteLyricsFile(musicPath, lyrics string, force bool) error {
+// title, artist, album 用于生成 LRC 元数据头（[ti:],[ar:],[al:]），可为空
+func WriteLyricsFile(musicPath, lyrics string, force bool, title, artist, album string) error {
 	lrcPath := strings.TrimSuffix(musicPath, filepath.Ext(musicPath)) + ".lrc"
 	if !force {
 		if _, err := os.Stat(lrcPath); err == nil {
 			return nil // 已存在，跳过
 		}
 	}
-	return os.WriteFile(lrcPath, []byte(lyrics), 0o644)
+
+	// 构建 LRC 内容，添加元数据头
+	var lrcBuilder strings.Builder
+	if title != "" {
+		lrcBuilder.WriteString("[ti:")
+		lrcBuilder.WriteString(title)
+		lrcBuilder.WriteString("]\n")
+	}
+	if artist != "" {
+		lrcBuilder.WriteString("[ar:")
+		lrcBuilder.WriteString(artist)
+		lrcBuilder.WriteString("]\n")
+	}
+	if album != "" {
+		lrcBuilder.WriteString("[al:")
+		lrcBuilder.WriteString(album)
+		lrcBuilder.WriteString("]\n")
+	}
+	lrcBuilder.WriteString(lyrics)
+
+	return os.WriteFile(lrcPath, []byte(lrcBuilder.String()), 0o644)
 }
 
 // WriteCoverFile 将封面图片保存为独立文件
