@@ -11,6 +11,7 @@
 - ✏️ 手动设置自定义元数据字段
 - 🗑️ 删除指定的元数据标签
 - 📊 查看音乐文件元数据信息
+- 🔄 转换音频格式并保留元数据（如 WAV → FLAC）
 - ⚡ 并发处理，支持自定义并发数
 - 🔄 智能跳过元信息完整的文件
 - 📁 支持外部文件模式（.lrc / .jpg）
@@ -209,6 +210,45 @@ music_metadata remove ./music --tag cover -w 5
 | `--tag` | `-t` | | 要删除的标签名，多个用逗号分隔 |
 | `--workers` | `-w` | 10 | 并发处理数 |
 
+### convert — 转换音频格式
+
+将音乐文件转换为指定格式，同时通过 `-map_metadata 0` 保留原始元数据。支持 MP3、FLAC、M4A、OGG、OPUS、WAV、AIFF、AAC、WMA 等格式之间的相互转换。
+
+> **注意**：APE 格式不支持写入内嵌元数据，因此无法作为目标格式。当源格式与目标格式相同时，使用 `-c:a copy` 直接复制音频流（快速）；格式不同时，由 ffmpeg 自动选择合适的编码器进行转码。
+
+```bash
+# 将单个 WAV 文件转换为 FLAC
+music_metadata convert song.wav --format flac
+
+# 将 FLAC 转换为 MP3
+music_metadata convert song.flac --format mp3
+
+# 批量转换目录中所有音乐文件为 FLAC
+music_metadata convert ./music --format flac
+
+# 预览模式（不实际转换）
+music_metadata convert ./music --format flac --dry-run
+
+# 强制覆盖已存在的目标文件
+music_metadata convert ./music --format flac --force
+
+# 设置并发数
+music_metadata convert ./music --format flac -w 5
+```
+
+#### 支持的目标格式
+
+`flac`, `mp3`, `m4a`, `ogg`, `opus`, `wav`, `aiff`, `aac`, `wma`
+
+#### convert 选项
+
+| 选项 | 简写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--format` | `-F` | flac | 目标格式（如 flac, mp3, m4a, ogg, wav, aiff） |
+| `--dry-run` | | false | 仅显示预览信息，不实际转换 |
+| `--force` | `-f` | false | 强制覆盖已存在的目标文件 |
+| `--workers` | `-w` | 10 | 并发处理数 |
+
 ### 全局选项
 
 | 选项 | 简写 | 默认值 | 说明 |
@@ -249,7 +289,8 @@ music_metadata remove ./music --tag cover -w 5
 │   ├── scan.go              # scan 命令（扫描补全元数据）
 │   ├── info.go              # info 命令（查看元数据信息）
 │   ├── set.go               # set 命令（设置自定义元数据）
-│   └── remove.go            # remove 命令（删除元数据）
+│   ├── remove.go            # remove 命令（删除元数据）
+│   └── convert.go           # convert 命令（转换音频格式）
 ├── metadata/
 │   ├── metadata.go          # 元数据读取、MusicFile 结构体、标签常量
 │   ├── writer.go            # 元数据写入和删除（id3v2 / ffmpeg）

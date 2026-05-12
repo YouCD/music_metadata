@@ -620,6 +620,36 @@ func SetMetadataWithFFmpeg(filePath string, tags map[string]string) error {
 	return nil
 }
 
+// ConvertWithFFmpeg 使用 ffmpeg 转换音频文件格式，并通过 -map_metadata 0 保留原始元数据
+// 输入路径和输出路径的扩展名决定了转换格式
+func ConvertWithFFmpeg(inputPath, outputPath string) error {
+	inputExt := strings.ToLower(filepath.Ext(inputPath))
+	outputExt := strings.ToLower(filepath.Ext(outputPath))
+
+	args := []string{
+		"-y",
+		"-i", inputPath,
+		"-map_metadata", "0",
+	}
+
+	// 当源格式和目标格式相同时，使用 -c:a copy 直接复制音频流（快速）
+	// 当格式不同时，不指定编码器让 ffmpeg 自动选择合适的编码器
+	if inputExt == outputExt {
+		args = append(args, "-c:a", "copy")
+	}
+
+	args = append(args, outputPath)
+
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg 转换失败: %w", err)
+	}
+
+	return nil
+}
+
 // SupportsEmbedding 检查 ffmpeg 是否可用
 func SupportsEmbedding() bool {
 	_, err := exec.LookPath("ffmpeg")

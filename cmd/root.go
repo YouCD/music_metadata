@@ -53,7 +53,7 @@ func Execute() {
 
 func init() {
 	// 全局标志
-	rootCmd.PersistentFlags().StringVarP(&providerName, "provider", "p", "netease", "元数据提供者 (netease)")
+	rootCmd.PersistentFlags().StringVarP(&providerName, "provider", "p", "netease", "元数据提供者 (netease, qqmusic, migu, baidu, kugou)")
 	rootCmd.PersistentFlags().StringVar(&apiBase, "api", "", "API 地址（留空使用提供者默认地址）")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "仅显示信息，不修改文件")
 	rootCmd.PersistentFlags().BoolVarP(&forceUpdate, "force", "f", false, "强制更新已有元数据")
