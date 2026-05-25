@@ -15,9 +15,7 @@ import (
 	"github.com/youcd/toolkit/log"
 )
 
-var (
-	convertFormat string
-)
+var convertFormat string
 
 var convertCmd = &cobra.Command{
 	Use:   "convert [文件或目录路径]",

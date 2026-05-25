@@ -134,7 +134,7 @@ func RemoveMetadataFromAPE(filePath string, tags []string) error {
 	newFileData = append(newFileData, newTagData...)
 
 	// 写入新文件
-	if err := os.WriteFile(filePath, newFileData, 0644); err != nil {
+	if err := os.WriteFile(filePath, newFileData, 0o644); err != nil {
 		return fmt.Errorf("写入文件失败: %w", err)
 	}
 

@@ -16,9 +16,7 @@ import (
 	"github.com/youcd/toolkit/log"
 )
 
-var (
-	setTags []string
-)
+var setTags []string
 
 var setCmd = &cobra.Command{
 	Use:   "set [文件或目录路径]",

@@ -16,9 +16,7 @@ import (
 	"github.com/youcd/toolkit/log"
 )
 
-var (
-	removeTags string
-)
+var removeTags string
 
 var removeCmd = &cobra.Command{
 	Use:   "remove [文件或目录路径]",
@@ -231,7 +229,6 @@ func removeMetadataFromFile(filePath string, tags []string, ctx context.Context)
 
 	// 删除内嵌元数据
 	if len(embedTags) > 0 {
-
 		if metadata.IsMP3(filePath) {
 			// MP3 使用 id3v2 库
 			if err := metadata.RemoveMetadataFromMP3(filePath, embedTags); err != nil {
